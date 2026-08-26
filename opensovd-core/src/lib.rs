@@ -5,6 +5,7 @@
 
 #![cfg_attr(all(test, coverage_nightly), feature(coverage_attribute))]
 
+mod bulkdata;
 mod data;
 mod discovery;
 mod entity;
