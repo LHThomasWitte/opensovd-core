@@ -12,13 +12,34 @@
 //! - DELETE /{entity-collection}/{entity-id}/bulk-data/{category}/{bulk-data-id} - Delete a specific bulk data resource
 
 use axum::{
-    Router,
-    extract::{Path, State},
+    Json, Router,
+    body::Body,
+    extract::{Multipart, Path, State},
+    response::IntoResponse,
     routing::get,
 };
-use opensovd_core::Topology;
+use axum_extra::{
+    TypedHeader,
+    extract::{Query, WithRejection},
+    headers::{ContentLength, ContentType, Header},
+};
+use futures::StreamExt;
+use http::{HeaderName, HeaderValue, StatusCode};
+use opensovd_core::{BulkDataError, BulkDataProvider, CategoryFilter, Topology, TopologyReadGuard};
+use opensovd_models::{
+    Response,
+    bulkdata::{
+        AvailableBulkDataCategories, BulkDataCategoriesQuery, BulkDataCategory, BulkDataDescriptor,
+        BulkDataDescriptorsQuery, BulkDataUpload,
+    },
+    types::SupportedTags,
+};
 
-use crate::routes::AppState;
+use crate::routes::{
+    AppState,
+    error::{Error, Result},
+};
+use crate::schema::JsonSchema;
 
 pub fn routes<V>() -> Router<AppState<V>>
 where
@@ -42,53 +63,293 @@ where
 }
 
 async fn bulk_data_categories(
-    State(_topology): State<Topology>,
-    Path((_entity_collection, _entity_id)): Path<(String, String)>,
-) {
-    todo!()
+    State(topology): State<Topology>,
+    Path((entity_collection, entity_id)): Path<(String, String)>,
+    WithRejection(Query(query), _): WithRejection<Query<BulkDataCategoriesQuery>, Error>,
+) -> Result<Json<Response<AvailableBulkDataCategories>>> {
+    let topo = topology.read().await;
+    let provider = get_provider(&topo, &entity_collection, &entity_id)?;
+    Ok(Json(Response {
+        data: AvailableBulkDataCategories {
+            items: provider
+                .categories()
+                .await?
+                .iter()
+                .map(|c| BulkDataCategory(c.category.clone()))
+                .collect::<Vec<_>>(),
+        },
+        schema: query
+            .include_schema
+            .then_some(AvailableBulkDataCategories::schema()),
+    }))
+}
+
+fn category_filter(query: &BulkDataDescriptorsQuery) -> Result<CategoryFilter> {
+    let created_before = query
+        .created_before
+        .as_ref()
+        .map(|date| {
+            date.parse::<chrono::DateTime<chrono::Utc>>()
+                .map_err(|e| BulkDataError::InvalidRequest(format!("Invalid date format: {e}")))
+        })
+        .transpose()?;
+
+    let created_after = query
+        .created_after
+        .as_ref()
+        .map(|date| {
+            date.parse::<chrono::DateTime<chrono::Utc>>()
+                .map_err(|e| BulkDataError::InvalidRequest(format!("Invalid date format: {e}")))
+        })
+        .transpose()?;
+
+    Ok(CategoryFilter {
+        created_before,
+        created_after,
+        tags: query.tags.clone(),
+    })
 }
 
 async fn bulk_data_descriptors(
-    State(_topology): State<Topology>,
-    Path((_entity_collection, _entity_id, _category)): Path<(String, String, String)>,
-) {
-    todo!()
+    State(topology): State<Topology>,
+    Path((entity_collection, entity_id, category)): Path<(String, String, String)>,
+    WithRejection(Query(query), _): WithRejection<Query<BulkDataDescriptorsQuery>, Error>,
+) -> Result<Json<Response<Vec<BulkDataDescriptor>>>> {
+    let topo = topology.read().await;
+    let provider = get_provider(&topo, &entity_collection, &entity_id)?;
+
+    Ok(Json(Response {
+        data: provider
+            .list(&category, category_filter(&query)?)
+            .await?
+            .iter()
+            .map(|metadata| BulkDataDescriptor {
+                id: metadata.id.clone(),
+                mimetype: metadata.mimetype.clone(),
+                name: metadata.name.clone(),
+                translation_id: metadata.translation_id.clone(),
+                size: metadata.size,
+                creation_date: metadata.creation_date.clone(),
+                last_modified: metadata.last_modified.clone(),
+                hash: metadata.hash.clone(),
+                hash_algorithm: metadata.hash_algorithm.clone(),
+                tags: metadata
+                    .tags
+                    .as_ref()
+                    .map(|tags| SupportedTags(tags.clone())),
+            })
+            .collect::<Vec<_>>(),
+        schema: query
+            .include_schema
+            .then_some(AvailableBulkDataCategories::schema()),
+    }))
+}
+
+#[derive(Clone, Debug)]
+pub struct ContentDisposition {
+    _disposition_type: String,
+    filename: Option<String>,
+    name: Option<String>,
+}
+
+impl Header for ContentDisposition {
+    fn name() -> &'static HeaderName {
+        &::http::header::CONTENT_DISPOSITION
+    }
+
+    fn decode<'i, I: Iterator<Item = &'i HeaderValue>>(
+        values: &mut I,
+    ) -> std::result::Result<Self, axum_extra::headers::Error> {
+        values
+            .next()
+            .cloned()
+            .map(|hv| {
+                let s = hv
+                    .to_str()
+                    .map_err(|_| axum_extra::headers::Error::invalid())?;
+                let parts: Vec<&str> = s.split(';').collect();
+                let disposition_type = parts
+                    .first()
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
+                let mut filename = None;
+                let mut name = None;
+                for part in parts.get(1..).unwrap_or(&[]) {
+                    let part = part.trim();
+                    if part.starts_with("filename=") {
+                        filename = Some(
+                            part.trim_start_matches("filename=")
+                                .trim_matches('"')
+                                .to_string(),
+                        );
+                    } else if part.starts_with("name=") {
+                        name = Some(
+                            part.trim_start_matches("name=")
+                                .trim_matches('"')
+                                .to_string(),
+                        );
+                    }
+                }
+                Ok(ContentDisposition {
+                    _disposition_type: disposition_type,
+                    filename,
+                    name,
+                })
+            })
+            .transpose()?
+            .ok_or_else(axum_extra::headers::Error::invalid)
+    }
+
+    fn encode<E: Extend<HeaderValue>>(&self, _values: &mut E) {
+        unimplemented!();
+    }
 }
 
 async fn upload_bulk_data(
-    State(_topology): State<Topology>,
-    Path((_entity_collection, _entity_id, _category)): Path<(String, String, String)>,
-) {
-    todo!()
+    State(topology): State<Topology>,
+    Path((entity_collection, entity_id, category)): Path<(String, String, String)>,
+    WithRejection(TypedHeader(_content_type), _): WithRejection<TypedHeader<ContentType>, Error>,
+    WithRejection(TypedHeader(content_disposition), _): WithRejection<
+        TypedHeader<ContentDisposition>,
+        Error,
+    >,
+    WithRejection(TypedHeader(content_length), _): WithRejection<TypedHeader<ContentLength>, Error>,
+    mut multipart: Multipart,
+) -> Result<(StatusCode, Json<Response<BulkDataUpload>>)> {
+    let topo = topology.read().await;
+    let provider = get_provider(&topo, &entity_collection, &entity_id)?;
+
+    let mut sig = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| BulkDataError::InvalidRequest(e.to_string()))?
+    {
+        match field.content_type() {
+            Some("application/json") => {
+                let json: serde_json::Value = serde_json::from_str(
+                    &field
+                        .text()
+                        .await
+                        .map_err(|e| BulkDataError::Internal(e.to_string()))?,
+                )
+                .map_err(|e| BulkDataError::InvalidRequest(e.to_string()))?;
+
+                if let Some(signature) = json.get("signature").and_then(|s| s.as_str()) {
+                    sig = Some(signature.to_string());
+                }
+            }
+            Some("application/octet-stream") => {
+                let filename = content_disposition
+                    .filename
+                    .clone()
+                    .or_else(|| content_disposition.name.clone())
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                provider
+                    .upload(
+                        &category,
+                        &filename,
+                        content_length.0,
+                        &field
+                            .map(|chunk| chunk.map_err(|e| BulkDataError::Internal(e.to_string()))),
+                        sig.as_ref(),
+                    )
+                    .await?;
+            }
+            _ => return Err(BulkDataError::Internal("unexpected content type".to_string()).into()),
+        }
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(Response {
+            data: BulkDataUpload { id: entity_id },
+            schema: Some(Vec::<BulkDataUpload>::schema()),
+        }),
+    ))
 }
 
 async fn delete_bulk_data_category(
-    State(_topology): State<Topology>,
-    Path((_entity_collection, _entity_id, _category)): Path<(String, String, String)>,
-) {
-    todo!()
+    State(topology): State<Topology>,
+    Path((entity_collection, entity_id, category)): Path<(String, String, String)>,
+) -> Result<StatusCode> {
+    let topo = topology.read().await;
+    let provider = get_provider(&topo, &entity_collection, &entity_id)?;
+
+    provider.delete(&category, None).await?;
+
+    Ok(StatusCode::OK)
 }
 
 async fn download_bulk_data(
-    State(_topology): State<Topology>,
-    Path((_entity_collection, _entity_id, _category, _bulk_data_id)): Path<(
+    State(topology): State<Topology>,
+    Path((entity_collection, entity_id, category, bulk_data_id)): Path<(
         String,
         String,
         String,
         String,
     )>,
-) {
-    todo!()
+) -> Result<impl IntoResponse> {
+    let topo = topology.read().await;
+    let provider = get_provider(&topo, &entity_collection, &entity_id)?;
+
+    let bulkdata = provider.download(&category, &bulk_data_id).await?;
+
+    let mut response = axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/octet-stream")
+        .header(
+            "Content-Disposition",
+            format!("attachment; filename=\"{bulk_data_id}\""),
+        );
+
+    if let Some(signature) = bulkdata.signature {
+        response = response.header("X-Signature", signature);
+    }
+
+    Ok(response
+        .body(Body::from_stream(bulkdata.data))
+        .map_err(|e| BulkDataError::Internal(e.to_string()))?)
 }
 
 async fn delete_bulk_data(
-    State(_topology): State<Topology>,
-    Path((_entity_collection, _entity_id, _category, _bulk_data_id)): Path<(
+    State(topology): State<Topology>,
+    Path((entity_collection, entity_id, category, bulk_data_id)): Path<(
         String,
         String,
         String,
         String,
     )>,
-) {
-    todo!()
+) -> Result<StatusCode> {
+    let topo = topology.read().await;
+    let provider = get_provider(&topo, &entity_collection, &entity_id)?;
+
+    provider.delete(&category, Some(&bulk_data_id)).await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn get_provider<'a>(
+    topo: &'a TopologyReadGuard<'a>,
+    entity_collection: &str,
+    entity_id: &str,
+) -> Result<&'a dyn BulkDataProvider> {
+    match entity_collection {
+        "components" => {
+            let component = topo
+                .get_component(entity_id)
+                .map_err(|_| Error::EntityNotFound(entity_id.to_string()))?;
+            component
+                .bulkdata_provider()
+                .ok_or_else(|| Error::ProviderNotAvailable("bulkdata".into()))
+        }
+        "apps" => {
+            let app = topo
+                .get_app(entity_id)
+                .map_err(|_| Error::EntityNotFound(entity_id.to_string()))?;
+            app.bulkdata_provider()
+                .ok_or_else(|| Error::ProviderNotAvailable("bulkdata".into()))
+        }
+        _ => Err(Error::EntityNotFound(entity_collection.to_string())),
+    }
 }

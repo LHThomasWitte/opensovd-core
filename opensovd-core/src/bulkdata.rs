@@ -4,27 +4,65 @@
 //! Bulk-Data provider trait and types.
 
 use async_trait::async_trait;
+use bytes::Bytes;
+use chrono::{DateTime, Utc};
+use futures_core::Stream;
 
-use crate::{CategoryInfo, DataError};
+use crate::CategoryInfo;
 
-pub struct Metadata {}
+#[derive(Debug, thiserror::Error)]
+pub enum BulkDataError {
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
+    #[error("bulk data deletion failed: {0}")]
+    DeletionFailed(String),
+    #[error("{0}")]
+    Internal(String),
+}
 
-pub struct BulkData {}
+pub struct CategoryFilter {
+    pub created_before: Option<DateTime<Utc>>,
+    pub created_after: Option<DateTime<Utc>>,
+    pub tags: Option<Vec<String>>,
+}
+
+pub struct Metadata {
+    pub id: String,
+    pub mimetype: String,
+    pub name: Option<String>,
+    pub translation_id: Option<String>,
+    pub size: Option<u64>,
+    pub creation_date: Option<String>,
+    pub last_modified: Option<String>,
+    pub hash: Option<String>,
+    pub hash_algorithm: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+pub struct BulkData {
+    pub signature: Option<String>,
+    pub data: Box<dyn Stream<Item = Result<Bytes>> + Send + Unpin>,
+}
 
 /// A `Result` alias where the `Err` variant is [`DataError`].
-pub type Result<T> = std::result::Result<T, DataError>;
+pub type Result<T> = std::result::Result<T, BulkDataError>;
 
 #[async_trait]
 pub trait BulkDataProvider: Send + Sync + 'static {
     async fn categories(&self) -> Result<Vec<CategoryInfo>>;
 
-    async fn list(&self, category_id: &str) -> Result<Vec<Metadata>>;
+    async fn list(&self, category_id: &str, filter: CategoryFilter) -> Result<Vec<Metadata>>;
 
-    async fn download(&self, data_id: &str, include_schema: bool) -> Result<BulkData>;
+    async fn download(&self, category_id: &str, data_id: &str) -> Result<BulkData>;
 
-    async fn upload(&self, data_id: &str, data: BulkData) -> Result<()>;
+    async fn upload(
+        &self,
+        category_id: &str,
+        data_id: &str,
+        size: u64,
+        data: &dyn Stream<Item = Result<Bytes>>,
+        signature: Option<&String>,
+    ) -> Result<()>;
 
-    async fn delete(&self, data_id: &str) -> Result<()>;
-
-    async fn delete_category(&self, category_id: &str) -> Result<()>;
+    async fn delete(&self, category_id: &str, data_id: Option<&str>) -> Result<()>;
 }
