@@ -26,7 +26,7 @@ pub struct CategoryFilter {
     pub tags: Option<Vec<String>>,
 }
 
-pub struct Metadata {
+pub struct BulkDataMetadata {
     pub id: String,
     pub mimetype: String,
     pub name: Option<String>,
@@ -51,7 +51,11 @@ pub type Result<T> = std::result::Result<T, BulkDataError>;
 pub trait BulkDataProvider: Send + Sync + 'static {
     async fn categories(&self) -> Result<Vec<CategoryInfo>>;
 
-    async fn list(&self, category_id: &str, filter: CategoryFilter) -> Result<Vec<Metadata>>;
+    async fn list(
+        &self,
+        category_id: &str,
+        filter: CategoryFilter,
+    ) -> Result<Vec<BulkDataMetadata>>;
 
     async fn download(&self, category_id: &str, data_id: &str) -> Result<BulkData>;
 
@@ -60,7 +64,7 @@ pub trait BulkDataProvider: Send + Sync + 'static {
         category_id: &str,
         data_id: &str,
         size: u64,
-        data: &dyn Stream<Item = Result<Bytes>>,
+        data: &mut (dyn Stream<Item = Result<Bytes>> + Send + Unpin),
         signature: Option<&String>,
     ) -> Result<()>;
 

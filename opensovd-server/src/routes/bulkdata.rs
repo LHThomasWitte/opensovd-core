@@ -14,7 +14,7 @@
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Multipart, Path, State},
+    extract::{DefaultBodyLimit, Multipart, Path, State},
     response::IntoResponse,
     routing::get,
 };
@@ -30,7 +30,7 @@ use opensovd_models::{
     Response,
     bulkdata::{
         AvailableBulkDataCategories, BulkDataCategoriesQuery, BulkDataCategory, BulkDataDescriptor,
-        BulkDataDescriptorsQuery, BulkDataUpload,
+        BulkDataDescriptorsQuery, BulkDataMetadata, BulkDataUpload,
     },
     types::SupportedTags,
 };
@@ -40,6 +40,9 @@ use crate::routes::{
     error::{Error, Result},
 };
 use crate::schema::JsonSchema;
+
+// Maximum allowed size for bulk data uploads (1 GiB).
+const MAX_BULKDATA_BODY_BYTES: usize = 1024 * 1024 * 1024;
 
 pub fn routes<V>() -> Router<AppState<V>>
 where
@@ -60,6 +63,7 @@ where
             "/{entity-collection}/{entity-id}/bulk-data/{category}/{bulk-data-id}",
             get(download_bulk_data).delete(delete_bulk_data),
         )
+        .layer(DefaultBodyLimit::max(MAX_BULKDATA_BODY_BYTES))
 }
 
 async fn bulk_data_categories(
@@ -114,34 +118,34 @@ async fn bulk_data_descriptors(
     State(topology): State<Topology>,
     Path((entity_collection, entity_id, category)): Path<(String, String, String)>,
     WithRejection(Query(query), _): WithRejection<Query<BulkDataDescriptorsQuery>, Error>,
-) -> Result<Json<Response<Vec<BulkDataDescriptor>>>> {
+) -> Result<Json<Response<BulkDataMetadata>>> {
     let topo = topology.read().await;
     let provider = get_provider(&topo, &entity_collection, &entity_id)?;
 
     Ok(Json(Response {
-        data: provider
-            .list(&category, category_filter(&query)?)
-            .await?
-            .iter()
-            .map(|metadata| BulkDataDescriptor {
-                id: metadata.id.clone(),
-                mimetype: metadata.mimetype.clone(),
-                name: metadata.name.clone(),
-                translation_id: metadata.translation_id.clone(),
-                size: metadata.size,
-                creation_date: metadata.creation_date.clone(),
-                last_modified: metadata.last_modified.clone(),
-                hash: metadata.hash.clone(),
-                hash_algorithm: metadata.hash_algorithm.clone(),
-                tags: metadata
-                    .tags
-                    .as_ref()
-                    .map(|tags| SupportedTags(tags.clone())),
-            })
-            .collect::<Vec<_>>(),
-        schema: query
-            .include_schema
-            .then_some(AvailableBulkDataCategories::schema()),
+        data: BulkDataMetadata {
+            items: provider
+                .list(&category, category_filter(&query)?)
+                .await?
+                .iter()
+                .map(|metadata| BulkDataDescriptor {
+                    id: metadata.id.clone(),
+                    mimetype: metadata.mimetype.clone(),
+                    name: metadata.name.clone(),
+                    translation_id: metadata.translation_id.clone(),
+                    size: metadata.size,
+                    creation_date: metadata.creation_date.clone(),
+                    last_modified: metadata.last_modified.clone(),
+                    hash: metadata.hash.clone(),
+                    hash_algorithm: metadata.hash_algorithm.clone(),
+                    tags: metadata
+                        .tags
+                        .as_ref()
+                        .map(|tags| SupportedTags(tags.clone())),
+                })
+                .collect::<Vec<_>>(),
+        },
+        schema: query.include_schema.then_some(BulkDataMetadata::schema()),
     }))
 }
 
@@ -245,18 +249,23 @@ async fn upload_bulk_data(
                     .clone()
                     .or_else(|| content_disposition.name.clone())
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let mut data_stream = field
+                    .map(|chunk| chunk.map_err(|e| BulkDataError::InvalidRequest(e.to_string())));
                 provider
                     .upload(
                         &category,
                         &filename,
                         content_length.0,
-                        &field
-                            .map(|chunk| chunk.map_err(|e| BulkDataError::Internal(e.to_string()))),
+                        &mut data_stream,
                         sig.as_ref(),
                     )
                     .await?;
             }
-            _ => return Err(BulkDataError::Internal("unexpected content type".to_string()).into()),
+            _ => {
+                return Err(
+                    BulkDataError::InvalidRequest("unexpected content type".to_string()).into(),
+                );
+            }
         }
     }
 

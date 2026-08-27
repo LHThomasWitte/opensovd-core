@@ -26,13 +26,21 @@ pub struct BulkDataCategory(pub String);
 pub struct BulkDataDescriptor {
     pub id: String,
     pub mimetype: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub translation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub creation_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_modified: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hash_algorithm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<SupportedTags>,
 }
 

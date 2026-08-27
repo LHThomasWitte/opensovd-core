@@ -11,7 +11,7 @@ mod discovery;
 mod entity;
 mod topology;
 
-pub use bulkdata::{BulkData, BulkDataError, BulkDataProvider, CategoryFilter};
+pub use bulkdata::{BulkData, BulkDataError, BulkDataMetadata, BulkDataProvider, CategoryFilter};
 pub use data::{
     CategoryInfo, Data, DataError, DataFilter, DataProvider, DataScope, GroupInfo, Metadata,
     TagInfo,

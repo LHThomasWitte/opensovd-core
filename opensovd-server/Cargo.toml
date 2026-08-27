@@ -39,7 +39,7 @@ tower = { workspace = true, features = ["util"] }
 tracing = { workspace = true }
 rustls = { workspace = true, optional = true }
 tokio-rustls = { workspace = true, optional = true }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 async-trait = { workspace = true }
