@@ -14,7 +14,7 @@
 use axum::{
     Json, Router,
     body::Body,
-    extract::{DefaultBodyLimit, Multipart, Path, State},
+    extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Request, State},
     response::IntoResponse,
     routing::get,
 };
@@ -212,59 +212,75 @@ impl Header for ContentDisposition {
 async fn upload_bulk_data(
     State(topology): State<Topology>,
     Path((entity_collection, entity_id, category)): Path<(String, String, String)>,
-    WithRejection(TypedHeader(_content_type), _): WithRejection<TypedHeader<ContentType>, Error>,
+    WithRejection(TypedHeader(content_type), _): WithRejection<TypedHeader<ContentType>, Error>,
     WithRejection(TypedHeader(content_disposition), _): WithRejection<
         TypedHeader<ContentDisposition>,
         Error,
     >,
     WithRejection(TypedHeader(content_length), _): WithRejection<TypedHeader<ContentLength>, Error>,
-    mut multipart: Multipart,
+    req: Request,
 ) -> Result<(StatusCode, Json<Response<BulkDataUpload>>)> {
     let topo = topology.read().await;
     let provider = get_provider(&topo, &entity_collection, &entity_id)?;
 
-    let mut sig = None;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| BulkDataError::InvalidRequest(e.to_string()))?
-    {
-        match field.content_type() {
-            Some("application/json") => {
-                let json: serde_json::Value = serde_json::from_str(
-                    &field
-                        .text()
-                        .await
-                        .map_err(|e| BulkDataError::Internal(e.to_string()))?,
-                )
-                .map_err(|e| BulkDataError::InvalidRequest(e.to_string()))?;
+    let filename = content_disposition
+        .filename
+        .clone()
+        .or_else(|| content_disposition.name.clone())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-                if let Some(signature) = json.get("signature").and_then(|s| s.as_str()) {
-                    sig = Some(signature.to_string());
-                }
-            }
-            Some("application/octet-stream") => {
-                let filename = content_disposition
-                    .filename
-                    .clone()
-                    .or_else(|| content_disposition.name.clone())
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                let mut data_stream = field
-                    .map(|chunk| chunk.map_err(|e| BulkDataError::InvalidRequest(e.to_string())));
-                provider
-                    .upload(
-                        &category,
-                        &filename,
-                        content_length.0,
-                        &mut data_stream,
-                        sig.as_ref(),
+    if content_type == ContentType::octet_stream() {
+        let mut stream = req
+            .into_body()
+            .into_data_stream()
+            .map(|r| r.map_err(|e| BulkDataError::Internal(e.to_string())));
+        provider
+            .upload(&category, &filename, content_length.0, &mut stream, None)
+            .await?;
+    } else {
+        let mut multipart = Multipart::from_request(req, &())
+            .await
+            .map_err(|e| BulkDataError::InvalidRequest(e.to_string()))?;
+        let mut sig = None;
+        while let Some(field) = multipart
+            .next_field()
+            .await
+            .map_err(|e| BulkDataError::InvalidRequest(e.to_string()))?
+        {
+            match field.content_type() {
+                Some("application/json") => {
+                    let json: serde_json::Value = serde_json::from_str(
+                        &field
+                            .text()
+                            .await
+                            .map_err(|e| BulkDataError::Internal(e.to_string()))?,
                     )
-                    .await?;
-            }
-            _ => {
-                return Err(
-                    BulkDataError::InvalidRequest("unexpected content type".to_string()).into(),
-                );
+                    .map_err(|e| BulkDataError::InvalidRequest(e.to_string()))?;
+
+                    if let Some(signature) = json.get("signature").and_then(|s| s.as_str()) {
+                        sig = Some(signature.to_string());
+                    }
+                }
+                Some("application/octet-stream") => {
+                    let mut data_stream = field.map(|chunk| {
+                        chunk.map_err(|e| BulkDataError::InvalidRequest(e.to_string()))
+                    });
+                    provider
+                        .upload(
+                            &category,
+                            &filename,
+                            content_length.0,
+                            &mut data_stream,
+                            sig.as_ref(),
+                        )
+                        .await?;
+                }
+                _ => {
+                    return Err(BulkDataError::InvalidRequest(
+                        "unexpected content type".to_string(),
+                    )
+                    .into());
+                }
             }
         }
     }
