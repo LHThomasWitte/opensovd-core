@@ -34,6 +34,7 @@ const APP_ID: &str = "bulkdata-example";
 const DEFAULT_MIMETYPE: &str = "application/octet-stream";
 const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 
+#[derive(Debug)]
 struct TempFsBulkDataProvider {
     root: TempDir,
 }

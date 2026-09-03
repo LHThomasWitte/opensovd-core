@@ -48,7 +48,7 @@ pub struct BulkData {
 pub type Result<T> = std::result::Result<T, BulkDataError>;
 
 #[async_trait]
-pub trait BulkDataProvider: Send + Sync + 'static {
+pub trait BulkDataProvider: Send + Sync + std::fmt::Debug + 'static {
     async fn categories(&self) -> Result<Vec<CategoryInfo>>;
 
     async fn list(

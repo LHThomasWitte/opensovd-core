@@ -18,7 +18,7 @@ type BulkDataMap = HashMap<String, HashMap<String, Vec<u8>>>;
 /// In-memory BulkDataProvider for testing. Supports upload, download, list, and delete.
 ///
 /// Storage layout: `category → (data_id → bytes)`.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct InMemoryBulkDataProvider {
     store: Arc<RwLock<BulkDataMap>>,
 }
