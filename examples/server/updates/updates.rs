@@ -52,7 +52,7 @@ struct Update {
     id: String,
     name: String,
     size: usize,
-    payload: Arc<RwLock<Payload>>,
+    payload: Arc<RwLock<Vec<Payload>>>,
 }
 
 impl UpdateDescriptor<UpdateDetail> for Update {
@@ -73,7 +73,11 @@ impl UpdateDescriptor<UpdateDetail> for Update {
     }
 
     fn from_model(model: &UpdateDetail) -> Self {
-        let url = model.notes.clone().unwrap_or_default();
+        let mut payload = Vec::new();
+        for target in &model.targets {
+            payload.push(Payload::Unresolved(target.file.clone()));
+        }
+
         Update {
             id: model
                 .id
@@ -82,7 +86,7 @@ impl UpdateDescriptor<UpdateDetail> for Update {
             name: model.update_name.clone(),
             #[allow(clippy::cast_possible_truncation)]
             size: model.size as usize,
-            payload: Arc::new(RwLock::new(Payload::Unresolved(url))),
+            payload: Arc::new(RwLock::new(payload)),
         }
     }
 }
@@ -182,7 +186,7 @@ impl Provider {
     async fn fetch_payload(
         store: &InMemoryBulkDataProvider,
         url: &str,
-        size_limit: usize,
+        remaining: &mut usize,
     ) -> Result<UpdatePayload, UpdateError> {
         let (category, id) = Self::parse_url(url);
         let mut bulk = store
@@ -190,15 +194,14 @@ impl Provider {
             .await
             .map_err(|e| UpdateError::ProviderError(e.to_string()))?;
         let mut bytes = Vec::new();
-        let mut remaining: usize = size_limit;
         while let Some(chunk) = bulk.data.next().await {
             let chunk = chunk.map_err(|e| UpdateError::ProviderError(e.to_string()))?;
-            if chunk.len() >= remaining {
-                bytes.extend_from_slice(&chunk[..remaining]);
+            if chunk.len() >= *remaining {
+                bytes.extend_from_slice(&chunk[..*remaining]);
                 break;
             }
             bytes.extend_from_slice(&chunk);
-            remaining -= chunk.len();
+            *remaining -= chunk.len();
         }
         serde_json::from_slice(&bytes).map_err(|e| UpdateError::ProviderError(e.to_string()))
     }
@@ -214,31 +217,27 @@ impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
             .as_any()
             .downcast_ref::<Update>()
             .ok_or_else(|| UpdateError::ProviderError("unexpected update type".into()))?;
-        let url = {
-            let guard = update
-                .payload
-                .try_read()
-                .map_err(|_| UpdateError::ProviderError("payload lock contended".into()))?;
-            if let Payload::Unresolved(ref u) = *guard {
-                u.clone()
-            } else {
-                return Err(UpdateError::ProviderError(
-                    "payload already resolved".into(),
-                ));
-            }
-        };
-        let size = update.size;
+        let mut remaining_size = update.size;
         let payload = Arc::clone(&update.payload);
         let store = Arc::clone(&self.store);
         tokio::spawn(async move {
-            match Self::fetch_payload(&store, &url, size).await {
-                Ok(fetched) => {
-                    let fetched = Arc::new(fetched);
-                    let messages = fetched.prepare.clone();
-                    *payload.write().await = Payload::Downloaded(Arc::clone(&fetched));
-                    Self::run_phase(Phase::Prepare, messages, feedback);
+            for payload in payload.write().await.iter_mut() {
+                if let Payload::Unresolved(url) = payload {
+                    match Self::fetch_payload(&store, url, &mut remaining_size).await {
+                        Ok(fetched) => {
+                            let fetched = Arc::new(fetched);
+                            *payload = Payload::Downloaded(Arc::clone(&fetched));
+                        }
+                        Err(e) => tracing::error!("prepare: failed to fetch payload: {e}"),
+                    }
                 }
-                Err(e) => tracing::error!("prepare: failed to fetch payload: {e}"),
+            }
+
+            for payload in payload.read().await.iter() {
+                if let Payload::Downloaded(fetched) = payload {
+                    let messages = fetched.prepare.clone();
+                    Self::run_phase(Phase::Prepare, messages, feedback.clone());
+                }
             }
         });
         Ok(())
@@ -253,21 +252,15 @@ impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
             .as_any()
             .downcast_ref::<Update>()
             .ok_or_else(|| UpdateError::ProviderError("unexpected update type".into()))?;
+
         let payload = Arc::clone(&update.payload);
-        let fetched = {
-            let guard = payload
-                .try_read()
-                .map_err(|_| UpdateError::ProviderError("payload lock contended".into()))?;
-            if let Payload::Downloaded(ref p) = *guard {
-                Arc::clone(p)
-            } else {
-                return Err(UpdateError::ProviderError(
-                    "execute requires prepare to be called first".into(),
-                ));
-            }
-        };
         tokio::spawn(async move {
-            Self::run_phase(Phase::Execute, fetched.execute.clone(), feedback);
+            for payload in payload.read().await.iter() {
+                if let Payload::Downloaded(fetched) = payload {
+                    let messages = fetched.execute.clone();
+                    Self::run_phase(Phase::Execute, messages, feedback.clone());
+                }
+            }
         });
         Ok(())
     }

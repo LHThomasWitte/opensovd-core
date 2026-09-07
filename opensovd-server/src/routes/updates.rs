@@ -120,6 +120,10 @@ where
                     size: update.size(),
                     updated_components: update.updated_components(),
                     affected_components: update.affected_components(),
+                    // the following fields are not included in the response
+                    authentication: None,
+                    authentication_token: None,
+                    targets: vec![],
                 },
                 schema: Some(UpdateDetail::schema()),
             }))
