@@ -1605,10 +1605,13 @@ dependencies = [
  "opensovd-providers",
  "opensovd-server",
  "sd-notify",
+ "serde",
+ "serde_json",
  "sysinfo",
  "tempfile",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
