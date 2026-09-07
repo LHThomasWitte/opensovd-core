@@ -7,7 +7,7 @@ use std::pin::Pin;
 
 use axum::Router;
 use futures::future::{FutureExt, Shared};
-use opensovd_core::Topology;
+use opensovd_core::{Topology, Updates};
 use serde::Serialize;
 use thiserror::Error;
 use tokio::net::TcpListener;
@@ -118,7 +118,7 @@ where
         Into<std::convert::Infallible> + 'static,
     <Layer::Service as TowerService<http::Request<axum::body::Body>>>::Future: Send + 'static,
 {
-    let inner = crate::routes::router(vendor_info, topology, advertised);
+    let inner = crate::routes::router(vendor_info, topology, advertised, Updates::default());
     let mut router = match base {
         Some(path) => Router::new().nest(path, inner),
         None => Router::new().merge(inner),
