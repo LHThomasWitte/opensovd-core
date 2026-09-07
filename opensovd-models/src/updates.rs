@@ -84,6 +84,24 @@ pub struct UpdateDetail {
     pub updated_components: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub affected_components: Option<Vec<String>>,
+    // the following fields are not part of the UpdateDetail response and are
+    // therefore only used to register the update with the server.
+    #[serde(skip_serializing)]
+    pub authentication: Option<String>,
+    #[serde(skip_serializing)]
+    pub authentication_token: Option<String>,
+    #[serde(skip_serializing)]
+    pub targets: Vec<Target>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+pub struct Target {
+    pub entity: String,
+    pub file: String,
+    pub file_signature: String,
+    pub routine: Option<String>,
+    pub routine_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
