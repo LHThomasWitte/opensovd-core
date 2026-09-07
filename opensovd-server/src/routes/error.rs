@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use axum_extra::{extract::QueryRejection, typed_header::TypedHeaderRejection};
-use opensovd_core::{BulkDataError, DataError, TopologyError};
+use opensovd_core::{BulkDataError, DataError, TopologyError, UpdateError};
 use opensovd_models::{ErrorCode, ErrorDetails, GenericError, JsonPointer};
 
 /// A `Result` alias where the `Err` variant is [`Error`].
@@ -30,6 +30,8 @@ pub enum Error {
     Data(#[from] DataError),
     #[error(transparent)]
     BulkData(#[from] BulkDataError),
+    #[error(transparent)]
+    Update(#[from] UpdateError),
     #[error("{0}")]
     BadQuery(#[from] QueryRejection),
     #[error("{0}")]
@@ -180,6 +182,34 @@ impl IntoResponse for Error {
                     GenericError::new(ErrorCode::ErrorResponse, message).into(),
                 )
             }
+            Self::Update(e) => match e {
+                UpdateError::ResponseFailed(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    GenericError::new(ErrorCode::ErrorResponse, e),
+                ),
+                UpdateError::AutomatedUpdateNotSupported => (
+                    StatusCode::CONFLICT,
+                    GenericError::new(ErrorCode::UpdateAutomatedNotSupported, e.to_string()),
+                ),
+                UpdateError::UpdateExecutionInProgress(id) => (
+                    StatusCode::CONFLICT,
+                    GenericError {
+                        error_code: ErrorCode::UpdateExecutionInProgress,
+                        message: e.to_string(),
+                        parameters: Some(serde_json::json!({ "id": id })),
+                        vendor_code: None,
+                        translation_id: None,
+                    },
+                ),
+                UpdateError::UpdateProviderNotConfigured => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    GenericError::new(ErrorCode::SovdServerMisconfigured, e.to_string()),
+                ),
+                UpdateError::ProviderError(msg) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    GenericError::new(ErrorCode::ErrorResponse, msg),
+                ),
+            },
         };
         (status, Json(details)).into_response()
     }

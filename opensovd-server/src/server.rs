@@ -8,7 +8,7 @@ use std::pin::Pin;
 use axum::Router;
 use futures::future::{FutureExt, Shared};
 use futures::stream::StreamExt;
-use opensovd_core::{DiscoveryProvider, EntityKind, Topology, Updates};
+use opensovd_core::{DiscoveryProvider, EntityKind, Topology};
 use serde::Serialize;
 use thiserror::Error;
 use tokio::net::TcpListener;
@@ -19,6 +19,7 @@ use tower::ServiceExt;
 use tower::layer::util::{Identity, Stack};
 use tower::util::BoxCloneSyncService;
 
+use crate::Updates;
 use crate::auth::{
     AllowAll, AuthenticationLayer, Authenticator, AuthorizationLayer, Authorizer, NoAuth,
 };
@@ -108,6 +109,7 @@ fn build_router<Vendor, Authn, Authz, Layer>(
     authenticator: Authn,
     authorizer: Authz,
     topology: Topology,
+    updates: Updates,
     layer: Layer,
     services: Vec<(String, Service)>,
 ) -> Router
@@ -124,7 +126,7 @@ where
         Into<std::convert::Infallible> + 'static,
     <Layer::Service as TowerService<http::Request<axum::body::Body>>>::Future: Send + 'static,
 {
-    let inner = crate::routes::router(vendor_info, topology, advertised, Updates::default());
+    let inner = crate::routes::router(vendor_info, topology, advertised, updates);
     let mut router = match base {
         Some(path) => Router::new().nest(path, inner),
         None => Router::new().merge(inner),
@@ -158,6 +160,7 @@ pub struct ServerBuilder<Vendor = VendorInfo, Authn = NoAuth, Authz = AllowAll, 
     authenticator: Authn,
     authorizer: Authz,
     topology: Topology,
+    updates: Updates,
     discovery_providers: Vec<Box<dyn DiscoveryProvider>>,
     layer: Layer,
     services: Vec<(String, Service)>,
@@ -173,6 +176,7 @@ pub struct Server<Vendor = VendorInfo, Authn = NoAuth, Authz = AllowAll, Layer =
     authenticator: Authn,
     authorizer: Authz,
     topology: Topology,
+    updates: Updates,
     discovery_providers: Vec<Box<dyn DiscoveryProvider>>,
     layer: Layer,
     services: Vec<(String, Service)>,
@@ -216,6 +220,7 @@ impl ServerBuilder<VendorInfo, NoAuth, AllowAll, Identity> {
             authenticator: NoAuth,
             authorizer: AllowAll,
             topology: Topology::default(),
+            updates: Updates::default(),
             discovery_providers: Vec::new(),
             layer: Identity::new(),
             services: Vec::new(),
@@ -269,6 +274,7 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
             authenticator: self.authenticator,
             authorizer: self.authorizer,
             topology: self.topology,
+            updates: self.updates,
             discovery_providers: self.discovery_providers,
             layer: self.layer,
             services: self.services,
@@ -290,6 +296,7 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
             authenticator,
             authorizer: self.authorizer,
             topology: self.topology,
+            updates: self.updates,
             discovery_providers: self.discovery_providers,
             layer: self.layer,
             services: self.services,
@@ -315,6 +322,7 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
             authenticator: self.authenticator,
             authorizer,
             topology: self.topology,
+            updates: self.updates,
             discovery_providers: self.discovery_providers,
             layer: self.layer,
             services: self.services,
@@ -338,6 +346,7 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
             authenticator: self.authenticator,
             authorizer: self.authorizer,
             topology: self.topology,
+            updates: self.updates,
             discovery_providers: self.discovery_providers,
             layer: Stack::new(layer, self.layer),
             services: self.services,
@@ -348,6 +357,11 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
 
     pub fn topology(mut self, topology: Topology) -> Self {
         self.topology = topology;
+        self
+    }
+
+    pub fn updates(mut self, updates: Updates) -> Self {
+        self.updates = updates;
         self
     }
 
@@ -404,6 +418,7 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
             authenticator: self.authenticator,
             authorizer: self.authorizer,
             topology: self.topology,
+            updates: self.updates,
             discovery_providers: self.discovery_providers,
             layer: self.layer,
             services: self.services,
@@ -528,6 +543,7 @@ where
             self.authenticator,
             self.authorizer,
             self.topology,
+            self.updates,
             self.layer,
             self.services,
         );

@@ -25,6 +25,16 @@
 //! - GET /components/{component_id}/data/{data_id} - Read a data value
 //! - PUT /components/{component_id}/data/{data_id} - Write a data value
 //!
+//! ## Software-Updates
+//! - GET    /updates
+//! - POST   /updates
+//! - GET    /updates/{update-package-id}
+//! - DELETE /updates/{update-package-id}
+//! - GET    /updates/{update-package-id}/status
+//! - PUT    /updates/{update-package-id}/automated
+//! - PUT    /updates/{update-package-id}/execute
+//! - PUT    /updates/{update-package-id}/prepare
+//!
 //! ## Version
 //! - GET /version-info - Get SOVD server version information
 
@@ -32,6 +42,7 @@ mod bulkdata;
 mod data;
 mod entities;
 mod error;
+mod updates;
 mod version;
 
 use axum::{
@@ -125,7 +136,8 @@ where
     let v1_routes = Router::new()
         .merge(entities::routes::<V>())
         .merge(bulkdata::routes::<V>())
-        .merge(data::routes::<V>());
+        .merge(data::routes::<V>())
+        .merge(updates::routes::<V>());
 
     let router = Router::new()
         .nest(&format!("/{API_VERSION}"), v1_routes)
