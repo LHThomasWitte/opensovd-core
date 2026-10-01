@@ -276,8 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Register the app with the shared bulk-data store in the topology.
     let component = Component::new(COMPONENT_ID, "Update Host");
-    let app = App::new(APP_ID, "Update Example", COMPONENT_ID)
-        .with_bulkdata_provider(store.as_ref().clone());
+    let app = App::new(APP_ID, COMPONENT_ID).with_bulkdata_provider(store.as_ref().clone());
 
     let topology = Topology::new();
     {

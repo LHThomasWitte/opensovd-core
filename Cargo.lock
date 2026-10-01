@@ -1390,7 +1390,6 @@ dependencies = [
  "opensovd-models",
  "opensovd-providers",
  "opensovd-server",
- "rustls",
  "sd-notify",
  "serde",
  "serde_json",

@@ -122,7 +122,12 @@ pub(crate) fn versioned_uri(parts: &Parts) -> String {
     format!("{}/{API_VERSION}", base_uri(parts))
 }
 
-pub fn router<V>(vendor_info: Option<V>, topology: Topology, base_uri: BaseUri, updates: Updates) -> Router
+pub fn router<V>(
+    vendor_info: Option<V>,
+    topology: Topology,
+    base_uri: BaseUri,
+    updates: Updates,
+) -> Router
 where
     V: Serialize + Clone + Send + Sync + 'static,
     VersionInfo<V>: JsonSchema,

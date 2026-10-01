@@ -5,6 +5,8 @@
 //!
 //! Defines error types that convert to SOVD-compliant HTTP error responses.
 
+use std::collections::HashMap;
+
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Json, Response},
@@ -12,6 +14,7 @@ use axum::{
 use axum_extra::{extract::QueryRejection, typed_header::TypedHeaderRejection};
 use opensovd_core::{BulkDataError, DataError, TopologyError, UpdateError};
 use opensovd_models::{ErrorCode, GenericError};
+use serde_json::json;
 
 /// A `Result` alias where the `Err` variant is [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
@@ -130,7 +133,7 @@ impl IntoResponse for Error {
                     GenericError {
                         error_code: ErrorCode::UpdateExecutionInProgress,
                         message: e.to_string(),
-                        parameters: Some(serde_json::json!({ "id": id })),
+                        parameters: Some(HashMap::from([("id".to_string(), json!(id))])),
                         vendor_code: None,
                         translation_id: None,
                     },

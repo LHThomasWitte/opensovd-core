@@ -218,6 +218,7 @@ mod tests {
         let state = AppState::<()> {
             vendor_info: None,
             topology,
+            updates: Updates::default(),
         };
         let app = routes::<()>()
             .with_state(state)
