@@ -5,6 +5,8 @@
 //!
 //! Defines error types that convert to SOVD-compliant HTTP error responses.
 
+use std::collections::HashMap;
+
 use axum::{
     extract::rejection::JsonRejection,
     http::{StatusCode, header},
@@ -13,6 +15,7 @@ use axum::{
 use axum_extra::{extract::QueryRejection, typed_header::TypedHeaderRejection};
 use opensovd_core::{BulkDataError, DataError, TopologyError, UpdateError};
 use opensovd_models::{ErrorCode, ErrorDetails, GenericError, JsonPointer};
+use serde_json::json;
 
 /// A `Result` alias where the `Err` variant is [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
@@ -81,6 +84,65 @@ fn body_rejection(rejection: &JsonRejection) -> (StatusCode, ErrorDetails) {
     }
 }
 
+/// Provides a suitable HTTP response with a status code and error details for
+/// a `BulkDataError`.
+fn bulkdata_error_response(e: &BulkDataError) -> (StatusCode, ErrorDetails) {
+    let status = match e {
+        BulkDataError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        BulkDataError::DeletionFailed(_) => StatusCode::CONFLICT,
+        BulkDataError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+        BulkDataError::NotFound(_) => StatusCode::NOT_FOUND,
+    };
+
+    // Sanitize internal errors - log details, return generic message
+    let message = match e {
+        BulkDataError::Internal(msg) => {
+            tracing::error!(target: "srv", error = %msg, "Internal error");
+            "An internal error occurred".to_string()
+        }
+        _ => e.to_string(),
+    };
+
+    (
+        status,
+        GenericError::new(ErrorCode::ErrorResponse, message).into(),
+    )
+}
+
+/// Provides a suitable HTTP response with a status code and error details for
+/// an `UpdateError`.
+fn update_error_response(e: &UpdateError) -> (StatusCode, ErrorDetails) {
+    match e {
+        UpdateError::ResponseFailed(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            GenericError::new(ErrorCode::ErrorResponse, e).into(),
+        ),
+        UpdateError::AutomatedUpdateNotSupported => (
+            StatusCode::CONFLICT,
+            GenericError::new(ErrorCode::UpdateAutomatedNotSupported, e.to_string()).into(),
+        ),
+        UpdateError::UpdateExecutionInProgress(id) => (
+            StatusCode::CONFLICT,
+            GenericError {
+                error_code: ErrorCode::UpdateExecutionInProgress,
+                message: e.to_string(),
+                parameters: Some(HashMap::from([("id".to_string(), json!(id))])),
+                vendor_code: None,
+                translation_id: None,
+            }
+            .into(),
+        ),
+        UpdateError::UpdateProviderNotConfigured => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            GenericError::new(ErrorCode::SovdServerMisconfigured, e.to_string()).into(),
+        ),
+        UpdateError::ProviderError(msg) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            GenericError::new(ErrorCode::ErrorResponse, msg).into(),
+        ),
+    }
+}
+
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, details): (_, ErrorDetails) = match &self {
@@ -140,28 +202,7 @@ impl IntoResponse for Error {
                     GenericError::new(ErrorCode::ErrorResponse, message).into(),
                 )
             }
-            Self::BulkData(e) => {
-                let status = match e {
-                    BulkDataError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-                    BulkDataError::DeletionFailed(_) => StatusCode::CONFLICT,
-                    BulkDataError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-                    BulkDataError::NotFound(_) => StatusCode::NOT_FOUND,
-                };
-
-                // Sanitize internal errors - log details, return generic message
-                let message = match e {
-                    BulkDataError::Internal(msg) => {
-                        tracing::error!(target: "srv", error = %msg, "Internal error");
-                        "An internal error occurred".to_string()
-                    }
-                    _ => e.to_string(),
-                };
-
-                (
-                    status,
-                    GenericError::new(ErrorCode::ErrorResponse, message).into(),
-                )
-            }
+            Self::BulkData(e) => bulkdata_error_response(e),
             Self::BadQuery(_) => (
                 StatusCode::BAD_REQUEST,
                 GenericError::new(ErrorCode::IncompleteRequest, "Bad request").into(),
@@ -182,34 +223,7 @@ impl IntoResponse for Error {
                     GenericError::new(ErrorCode::ErrorResponse, message).into(),
                 )
             }
-            Self::Update(e) => match e {
-                UpdateError::ResponseFailed(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    GenericError::new(ErrorCode::ErrorResponse, e),
-                ),
-                UpdateError::AutomatedUpdateNotSupported => (
-                    StatusCode::CONFLICT,
-                    GenericError::new(ErrorCode::UpdateAutomatedNotSupported, e.to_string()),
-                ),
-                UpdateError::UpdateExecutionInProgress(id) => (
-                    StatusCode::CONFLICT,
-                    GenericError {
-                        error_code: ErrorCode::UpdateExecutionInProgress,
-                        message: e.to_string(),
-                        parameters: Some(serde_json::json!({ "id": id })),
-                        vendor_code: None,
-                        translation_id: None,
-                    },
-                ),
-                UpdateError::UpdateProviderNotConfigured => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    GenericError::new(ErrorCode::SovdServerMisconfigured, e.to_string()),
-                ),
-                UpdateError::ProviderError(msg) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    GenericError::new(ErrorCode::ErrorResponse, msg),
-                ),
-            },
+            Self::Update(e) => update_error_response(e),
         };
         (status, Json(details)).into_response()
     }
