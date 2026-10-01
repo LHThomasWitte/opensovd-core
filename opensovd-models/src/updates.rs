@@ -28,7 +28,7 @@ pub enum Phase {
 pub struct Progress {
     entity: String,
     status: Status,
-    #[allow(clippy::struct_field_names)]
+    #[expect(clippy::struct_field_names)]
     #[serde(skip_serializing_if = "Option::is_none")]
     progress: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]

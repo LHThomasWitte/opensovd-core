@@ -84,7 +84,7 @@ impl UpdateDescriptor<UpdateDetail> for Update {
                 .clone()
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             name: model.update_name.clone(),
-            #[allow(clippy::cast_possible_truncation)]
+            #[expect(clippy::cast_possible_truncation)]
             size: model.size as usize,
             payload: Arc::new(RwLock::new(payload)),
         }
@@ -154,7 +154,7 @@ impl Provider {
         path.split_once('/').unwrap_or((path, ""))
     }
 
-    #[allow(clippy::print_stdout, clippy::arithmetic_side_effects)]
+    #[expect(clippy::print_stdout, clippy::arithmetic_side_effects)]
     fn run_phase(
         phase: Phase,
         messages: Vec<String>,
@@ -167,7 +167,7 @@ impl Provider {
                 let _ = feedback.send(Some(Arc::new(Feedback {
                     phase: phase.clone(),
                     status: Status::InProgress,
-                    #[allow(clippy::cast_possible_truncation)]
+                    #[expect(clippy::cast_possible_truncation)]
                     progress: Some((i * 100 / total) as u8),
                     step: Some(msg.clone()),
                 })));
@@ -182,7 +182,7 @@ impl Provider {
         });
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
+    #[expect(clippy::arithmetic_side_effects)]
     async fn fetch_payload(
         store: &InMemoryBulkDataProvider,
         url: &str,
@@ -276,8 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Register the app with the shared bulk-data store in the topology.
     let component = Component::new(COMPONENT_ID, "Update Host");
-    let app = App::new(APP_ID, "Update Example", COMPONENT_ID)
-        .with_bulkdata_provider(store.as_ref().clone());
+    let app = App::new(APP_ID, COMPONENT_ID).with_bulkdata_provider(store.as_ref().clone());
 
     let topology = Topology::new();
     {
@@ -294,7 +293,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .listener(listener)
         .topology(topology)
         .updates(updates)
-        .layer(libcli::trace::trace_layer())
+        .layer(opensovd_extra::trace::server_layer())
         .build()?;
 
     tracing::info!("Server running on http://127.0.0.1:7690/sovd/v1");
