@@ -428,7 +428,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_components_returns_json() -> TestResult {
-        let components = serde_json::to_string(&opensovd_models::Response {
+        let components = serde_json::to_string(&Response {
             data: opensovd_models::Items {
                 items: vec![entity("components", "ecu1", "Engine ECU")],
             },
@@ -464,7 +464,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_areas_returns_json() -> TestResult {
-        let areas = serde_json::to_string(&opensovd_models::Response {
+        let areas = serde_json::to_string(&Response {
             data: opensovd_models::Items {
                 items: vec![entity("areas", "powertrain", "Powertrain")],
             },
@@ -500,7 +500,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_apps_returns_json() -> TestResult {
-        let apps = serde_json::to_string(&opensovd_models::Response {
+        let apps = serde_json::to_string(&Response {
             data: opensovd_models::Items {
                 items: vec![entity("apps", "diag_app", "Diagnostic App")],
             },
