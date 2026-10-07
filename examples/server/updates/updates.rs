@@ -176,7 +176,7 @@ impl Provider {
             }
             let _ = feedback.send(Some(Arc::new(Feedback {
                 phase: phase.clone(),
-                status: Status::Completed,
+                status: Status::InProgress,
                 progress: Some(100),
                 step: None,
             })));
@@ -218,7 +218,8 @@ impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
             .as_any()
             .downcast_ref::<Update>()
             .ok_or_else(|| UpdateError::ProviderError("unexpected update type".into()))?;
-        let mut remaining_size = update.size;
+        let mut remaining_size = usize::try_from(update.size())
+            .map_err(|_| UpdateError::ProviderError("update size too large".into()))?;
         let payload = Arc::clone(&update.payload);
         let store = Arc::clone(&self.store);
         tokio::spawn(async move {
@@ -248,6 +249,13 @@ impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
                     Self::run_phase(Phase::Prepare, messages, feedback.clone());
                 }
             }
+
+            let _ = feedback.send(Some(Arc::new(Feedback {
+                phase: Phase::Prepare,
+                status: Status::Completed,
+                progress: Some(100),
+                step: None,
+            })));
         });
         Ok(())
     }
@@ -270,6 +278,72 @@ impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
                     Self::run_phase(Phase::Execute, messages, feedback.clone());
                 }
             }
+
+            let _ = feedback.send(Some(Arc::new(Feedback {
+                phase: Phase::Execute,
+                status: Status::Completed,
+                progress: Some(100),
+                step: None,
+            })));
+        });
+        Ok(())
+    }
+
+    fn automated(
+        &self,
+        update: &dyn UpdateDescriptor<UpdateDetail>,
+        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback<UpdateStatus>>>>,
+    ) -> Result<(), UpdateError> {
+        let update = update
+            .as_any()
+            .downcast_ref::<Update>()
+            .ok_or_else(|| UpdateError::ProviderError("unexpected update type".into()))?;
+        let mut remaining_size = usize::try_from(update.size())
+            .map_err(|_| UpdateError::ProviderError("update size too large".into()))?;
+        let payload = Arc::clone(&update.payload);
+        let store = Arc::clone(&self.store);
+
+        tokio::spawn(async move {
+            for payload in payload.write().await.iter_mut() {
+                if let Payload::Unresolved(url) = payload {
+                    match Self::fetch_payload(&store, url, &mut remaining_size).await {
+                        Ok(fetched) => {
+                            let fetched = Arc::new(fetched);
+                            *payload = Payload::Downloaded(Arc::clone(&fetched));
+                        }
+                        Err(e) => {
+                            let _ = feedback.send(Some(Arc::new(Feedback {
+                                phase: Phase::Prepare,
+                                status: Status::Failed(e),
+                                progress: None,
+                                step: None,
+                            })));
+                            return;
+                        }
+                    }
+                }
+            }
+
+            for payload in payload.read().await.iter() {
+                if let Payload::Downloaded(fetched) = payload {
+                    let messages = fetched.prepare.clone();
+                    Self::run_phase(Phase::Prepare, messages, feedback.clone());
+                }
+            }
+
+            for payload in payload.read().await.iter() {
+                if let Payload::Downloaded(fetched) = payload {
+                    let messages = fetched.execute.clone();
+                    Self::run_phase(Phase::Execute, messages, feedback.clone());
+                }
+            }
+
+            let _ = feedback.send(Some(Arc::new(Feedback {
+                phase: Phase::Execute,
+                status: Status::Completed,
+                progress: Some(100),
+                step: None,
+            })));
         });
         Ok(())
     }
