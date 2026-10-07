@@ -81,11 +81,10 @@ pub struct Updates<UpdateModel, FeedbackModel> {
 
 impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, FeedbackModel> {
     #[must_use]
-    pub fn new<UpdateImpl, FeedbackImpl, Provider>(provider: Provider) -> Self
+    pub fn new<UpdateImpl, Provider>(provider: Provider) -> Self
     where
         Provider: UpdateProvider<UpdateModel, FeedbackModel> + 'static,
         UpdateImpl: UpdateDescriptor<UpdateModel> + 'static,
-        FeedbackImpl: UpdateFeedback<FeedbackModel> + 'static,
     {
         Self {
             inner: Arc::new(RwLock::new(UpdatesInner {
