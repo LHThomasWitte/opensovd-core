@@ -18,6 +18,8 @@ pub enum UpdateError {
     UpdateProviderNotConfigured,
     #[error("Update provider error: {0}")]
     ProviderError(String),
+    #[error("Update ID conflicts with existing ID: {0}")]
+    UpdateIdConflict(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +107,10 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
         let mut inner = self.inner.write().await;
         let item = (inner.model2update)(update)?;
         let id = item.id().clone();
+        if inner.available.iter().any(|u| u.id() == id) {
+            // the update id already exists
+            return Err(UpdateError::UpdateIdConflict(id));
+        }
         inner.available.push(item);
         Ok(id)
     }
