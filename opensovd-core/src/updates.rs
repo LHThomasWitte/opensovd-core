@@ -12,7 +12,7 @@ pub enum UpdateError {
     ResponseFailed(String),
     #[error("The package cannot be installed automatically")]
     AutomatedUpdateNotSupported,
-    #[error("An update is already in preparation")]
+    #[error("An update is already being executed")]
     UpdateExecutionInProgress(String),
     #[error("UpdateProvider is not configured")]
     UpdateProviderNotConfigured,
@@ -50,8 +50,11 @@ impl PartialEq for Status {
 type FeedbackSender<FeedbackModel> = watch::Sender<Option<Arc<dyn UpdateFeedback<FeedbackModel>>>>;
 type FeedbackReceiver<FeedbackModel> =
     watch::Receiver<Option<Arc<dyn UpdateFeedback<FeedbackModel>>>>;
-type Model2Update<UpdateModel> =
-    Arc<dyn Fn(&UpdateModel) -> Arc<dyn UpdateDescriptor<UpdateModel>> + Send + Sync>;
+type Model2Update<UpdateModel> = Arc<
+    dyn Fn(&UpdateModel) -> Result<Arc<dyn UpdateDescriptor<UpdateModel>>, UpdateError>
+        + Send
+        + Sync,
+>;
 
 struct UpdatesInner<UpdateModel, FeedbackModel> {
     provider: Option<Arc<dyn UpdateProvider<UpdateModel, FeedbackModel>>>,
@@ -87,15 +90,23 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
                 provider: Some(Arc::new(provider)),
                 available: Vec::new(),
                 feedback: HashMap::new(),
-                model2update: Arc::new(|model| Arc::new(UpdateImpl::from_model(model))),
+                model2update: Arc::new(|model| Ok(Arc::new(UpdateImpl::from_model(model)))),
             })),
         }
     }
 
-    pub async fn push(&self, update: &UpdateModel) {
+    /// Adds an update to the list of available updates.
+    ///
+    /// # Errors
+    ///
+    /// Returns `UpdateProviderNotConfigured` if no update provider is
+    /// configured.
+    pub async fn push(&self, update: &UpdateModel) -> Result<String, UpdateError> {
         let mut inner = self.inner.write().await;
-        let item = (inner.model2update)(update);
+        let item = (inner.model2update)(update)?;
+        let id = item.id().clone();
         inner.available.push(item);
+        Ok(id)
     }
 
     pub async fn remove(&self, update_package_id: &str) {
@@ -175,7 +186,7 @@ impl<UpdateModel, FeedbackModel> Default for Updates<UpdateModel, FeedbackModel>
     fn default() -> Self {
         Self {
             inner: Arc::new(RwLock::new(UpdatesInner {
-                model2update: Arc::new(|_model| panic!("no UpdateProvider configured")),
+                model2update: Arc::new(|_model| Err(UpdateError::UpdateProviderNotConfigured)),
                 provider: None,
                 available: Vec::new(),
                 feedback: HashMap::new(),
@@ -297,10 +308,9 @@ pub trait UpdateProvider<UpdateModel: 'static, FeedbackModel: 'static>:
     /// todo
     fn automated(
         &self,
-        update: &dyn UpdateDescriptor<UpdateModel>,
-        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback<FeedbackModel>>>>,
+        _update: &dyn UpdateDescriptor<UpdateModel>,
+        _feedback: watch::Sender<Option<Arc<dyn UpdateFeedback<FeedbackModel>>>>,
     ) -> Result<(), UpdateError> {
-        self.prepare(update, feedback.clone())?;
-        self.execute(update, feedback)
+        Err(UpdateError::AutomatedUpdateNotSupported)
     }
 }

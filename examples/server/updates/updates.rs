@@ -124,7 +124,8 @@ impl UpdateFeedback<UpdateStatus> for Feedback {
             Phase::Execute => ModelPhase::Execute,
         };
         let status = match &self.status {
-            Status::Pending | Status::InProgress => ModelStatus::InProgress,
+            Status::Pending => ModelStatus::Pending,
+            Status::InProgress => ModelStatus::InProgress,
             Status::Failed(_) => ModelStatus::Failed,
             Status::Completed => ModelStatus::Completed,
         };
@@ -228,7 +229,15 @@ impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
                             let fetched = Arc::new(fetched);
                             *payload = Payload::Downloaded(Arc::clone(&fetched));
                         }
-                        Err(e) => tracing::error!("prepare: failed to fetch payload: {e}"),
+                        Err(e) => {
+                            let _ = feedback.send(Some(Arc::new(Feedback {
+                                phase: Phase::Prepare,
+                                status: Status::Failed(e),
+                                progress: None,
+                                step: None,
+                            })));
+                            return;
+                        }
                     }
                 }
             }
