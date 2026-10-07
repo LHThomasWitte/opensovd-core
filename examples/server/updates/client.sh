@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
+# SPDX-License-Identifier: Apache-2.0
+
 # Drives the updates example server through prepare → poll → execute → poll.
 # Requires the server to be running: cargo run -p opensovd-examples-server --example updates
 

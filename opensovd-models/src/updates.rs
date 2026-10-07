@@ -26,13 +26,12 @@ pub enum Phase {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub struct Progress {
-    entity: String,
-    status: Status,
-    #[expect(clippy::struct_field_names)]
+    pub entity: String,
+    pub status: Status,
     #[serde(skip_serializing_if = "Option::is_none")]
-    progress: Option<u8>,
+    pub progress: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<GenericError>,
+    pub error: Option<GenericError>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +51,13 @@ pub enum Status {
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub struct AvailableUpdates {
     pub items: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+#[serde(default, rename_all = "kebab-case")]
+pub struct UpdateDetailQuery {
+    pub include_schema: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

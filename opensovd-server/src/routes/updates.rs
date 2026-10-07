@@ -8,11 +8,12 @@ use axum::{
     response::Json,
     routing::{get, put},
 };
+use axum_extra::extract::{Query, WithRejection};
 use http::{HeaderValue, request::Parts};
 use opensovd_core::{Phase, Status, UpdateError};
 use opensovd_models::{
     Response,
-    updates::{AvailableUpdates, UpdateDetail, UpdateOrigins, UpdateStatus},
+    updates::{AvailableUpdates, UpdateDetail, UpdateDetailQuery, UpdateOrigins, UpdateStatus},
 };
 
 use super::error::Result;
@@ -61,7 +62,7 @@ where
                 .map(|u| u.id().clone())
                 .collect(),
         },
-        schema: Some(AvailableUpdates::schema()),
+        schema: None,
     })
 }
 
@@ -73,14 +74,15 @@ async fn create_updates<V>(
 where
     V: Clone + Send + Sync + 'static,
 {
-    let id = body.id.clone().unwrap_or_else(|| body.update_name.clone());
-
-    state.updates.push(&body).await;
-    let base_uri = super::base_uri(&parts);
+    let id = state.updates.push(&body).await?;
+    let versioned_uri = super::versioned_uri(&parts);
 
     let mut headers = HeaderMap::new();
-    let location = HeaderValue::from_str(&format!("{base_uri}/updates/{id}"))
-        .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
+    let location = HeaderValue::from_str(&format!(
+        "{versioned_uri}/updates/{}",
+        super::entities::encode_path_segment(&id)
+    ))
+    .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
     headers.insert("Location", location);
 
     Ok((StatusCode::CREATED, headers))
@@ -89,6 +91,7 @@ where
 async fn get_update_package<V>(
     axum::extract::Path(update_package_id): axum::extract::Path<String>,
     State(state): State<AppState<V>>,
+    WithRejection(Query(query), _): WithRejection<Query<UpdateDetailQuery>, Error>,
 ) -> Result<Json<Response<UpdateDetail>>>
 where
     V: Clone + Send + Sync + 'static,
@@ -128,7 +131,7 @@ where
                     authentication_token: None,
                     targets: vec![],
                 },
-                schema: Some(UpdateDetail::schema()),
+                schema: query.include_schema.then_some(UpdateDetail::schema()),
             }))
         },
     )
@@ -220,11 +223,13 @@ where
         .ok_or(UpdateError::UpdateProviderNotConfigured)?
         .automated(&*update, feedback)?;
 
-    let base_uri = super::base_uri(&parts);
+    let versioned_uri = super::versioned_uri(&parts);
 
     let mut headers = HeaderMap::new();
-    let location = HeaderValue::from_str(&format!("{base_uri}/updates/{update_package_id}/status"))
-        .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
+    let location = HeaderValue::from_str(&format!(
+        "{versioned_uri}/updates/{update_package_id}/status"
+    ))
+    .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
     headers.insert("Location", location);
 
     Ok((StatusCode::ACCEPTED, headers))
@@ -270,11 +275,13 @@ where
         .ok_or(UpdateError::UpdateProviderNotConfigured)?
         .execute(&*update, feedback)?;
 
-    let base_uri = super::base_uri(&parts);
+    let versioned_uri = super::versioned_uri(&parts);
 
     let mut headers = HeaderMap::new();
-    let location = HeaderValue::from_str(&format!("{base_uri}/updates/{update_package_id}/status"))
-        .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
+    let location = HeaderValue::from_str(&format!(
+        "{versioned_uri}/updates/{update_package_id}/status"
+    ))
+    .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
     headers.insert("Location", location);
 
     Ok((StatusCode::ACCEPTED, headers))
@@ -303,11 +310,13 @@ where
         .ok_or(UpdateError::UpdateProviderNotConfigured)?
         .prepare(&*update, feedback)?;
 
-    let base_uri = super::base_uri(&parts);
+    let versioned_uri = super::versioned_uri(&parts);
 
     let mut headers = HeaderMap::new();
-    let location = HeaderValue::from_str(&format!("{base_uri}/updates/{update_package_id}/status"))
-        .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
+    let location = HeaderValue::from_str(&format!(
+        "{versioned_uri}/updates/{update_package_id}/status"
+    ))
+    .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
     headers.insert("Location", location);
 
     Ok((StatusCode::ACCEPTED, headers))
