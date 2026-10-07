@@ -140,6 +140,10 @@ fn update_error_response(e: &UpdateError) -> (StatusCode, ErrorDetails) {
             StatusCode::INTERNAL_SERVER_ERROR,
             GenericError::new(ErrorCode::ErrorResponse, msg).into(),
         ),
+        UpdateError::UpdateIdConflict(_id) => (
+            StatusCode::CONFLICT,
+            GenericError::new(ErrorCode::VendorSpecific, e.to_string()).into(),
+        ),
     }
 }
 
