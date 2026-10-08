@@ -49,29 +49,22 @@ impl PartialEq for Status {
     }
 }
 
-type FeedbackSender<FeedbackModel> = watch::Sender<Option<Arc<dyn UpdateFeedback<FeedbackModel>>>>;
-type FeedbackReceiver<FeedbackModel> =
-    watch::Receiver<Option<Arc<dyn UpdateFeedback<FeedbackModel>>>>;
-type Model2Update<UpdateModel> = Arc<
-    dyn Fn(&UpdateModel) -> Result<Arc<dyn UpdateDescriptor<UpdateModel>>, UpdateError>
-        + Send
-        + Sync,
->;
+type FeedbackSender = watch::Sender<Option<Arc<dyn UpdateFeedback>>>;
+type FeedbackReceiver = watch::Receiver<Option<Arc<dyn UpdateFeedback>>>;
+type Model2Update<UpdateModel> =
+    Arc<dyn Fn(&UpdateModel) -> Result<Arc<dyn UpdateDescriptor>, UpdateError> + Send + Sync>;
+type Feedback2Model<FeedbackModel> =
+    Arc<dyn Fn(&dyn UpdateFeedback) -> Result<Arc<FeedbackModel>, UpdateError> + Send + Sync>;
 
 struct UpdatesInner<UpdateModel, FeedbackModel> {
-    provider: Option<Arc<dyn UpdateProvider<UpdateModel, FeedbackModel>>>,
-    available: Vec<Arc<dyn UpdateDescriptor<UpdateModel>>>,
-    feedback: HashMap<
-        String,
-        (
-            FeedbackSender<FeedbackModel>,
-            FeedbackReceiver<FeedbackModel>,
-        ),
-    >,
+    provider: Option<Arc<dyn UpdateProvider>>,
+    available: Vec<Arc<dyn UpdateDescriptor>>,
+    feedback: HashMap<String, (FeedbackSender, FeedbackReceiver)>,
     // model2update stores the method UpdateModel -> UpdateImpl from the
     // UpdateDescriptor trait as a workaround since the actual UpdateImpl type
     // implementing it is erased from Updates.
     model2update: Model2Update<UpdateModel>,
+    feedback2model: Feedback2Model<FeedbackModel>,
 }
 
 #[derive(Clone)]
@@ -81,10 +74,10 @@ pub struct Updates<UpdateModel, FeedbackModel> {
 
 impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, FeedbackModel> {
     #[must_use]
-    pub fn new<UpdateImpl, Provider>(provider: Provider) -> Self
+    pub fn new<UpdateImpl, FeedbackImpl>(provider: impl UpdateProvider + 'static) -> Self
     where
-        Provider: UpdateProvider<UpdateModel, FeedbackModel> + 'static,
-        UpdateImpl: UpdateDescriptor<UpdateModel> + 'static,
+        UpdateImpl: UpdateDescriptor + FromModel<UpdateModel> + 'static,
+        FeedbackImpl: ToModel<FeedbackModel> + 'static,
     {
         Self {
             inner: Arc::new(RwLock::new(UpdatesInner {
@@ -92,6 +85,7 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
                 available: Vec::new(),
                 feedback: HashMap::new(),
                 model2update: Arc::new(|model| Ok(Arc::new(UpdateImpl::from_model(model)))),
+                feedback2model: Arc::new(|feedback| Ok(Arc::new(FeedbackImpl::to_model(feedback)))),
             })),
         }
     }
@@ -122,15 +116,12 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
     }
 
     #[must_use]
-    pub async fn available(&self) -> Vec<Arc<dyn UpdateDescriptor<UpdateModel>>> {
+    pub async fn available(&self) -> Vec<Arc<dyn UpdateDescriptor>> {
         self.inner.read().await.available.clone()
     }
 
     #[must_use]
-    pub async fn find(
-        &self,
-        update_package_id: &str,
-    ) -> Option<Arc<dyn UpdateDescriptor<UpdateModel>>> {
+    pub async fn find(&self, update_package_id: &str) -> Option<Arc<dyn UpdateDescriptor>> {
         self.inner
             .read()
             .await
@@ -143,7 +134,7 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
     pub async fn feedback_sender(
         &self,
         update_package_id: &str,
-    ) -> watch::Sender<Option<Arc<dyn UpdateFeedback<FeedbackModel>>>> {
+    ) -> watch::Sender<Option<Arc<dyn UpdateFeedback>>> {
         let mut inner = self.inner.write().await;
         if let Some((tx, _rx)) = inner.feedback.get(update_package_id) {
             tx.clone()
@@ -157,32 +148,44 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
     }
 
     #[must_use]
-    pub async fn feedback(
-        &self,
-        update_package_id: &str,
-    ) -> Option<Arc<dyn UpdateFeedback<FeedbackModel>>> {
+    pub async fn feedback(&self, update_package_id: &str) -> Option<Arc<FeedbackModel>> {
+        #[expect(clippy::clone_on_ref_ptr)]
+        let feedback2model = self.inner.read().await.feedback2model.clone();
         self.inner
             .read()
             .await
             .feedback
             .get(update_package_id)
-            .and_then(|(_, rx)| rx.borrow().clone())
+            .and_then(|(_, rx)| {
+                if let Some(feedback) = &*rx.borrow() {
+                    feedback2model(feedback.as_ref()).ok()
+                } else {
+                    None
+                }
+            })
     }
 
-    pub async fn all_feedback(
-        &self,
-    ) -> Vec<(String, Option<Arc<dyn UpdateFeedback<FeedbackModel>>>)> {
+    pub async fn all_feedback(&self) -> Vec<(String, Option<Arc<FeedbackModel>>)> {
+        #[expect(clippy::clone_on_ref_ptr)]
+        let feedback2model = self.inner.read().await.feedback2model.clone();
         self.inner
             .read()
             .await
             .feedback
             .iter()
-            .map(|(id, (_tx, rx))| (id.clone(), rx.borrow().clone()))
+            .map(|(id, (_tx, rx))| {
+                let model = if let Some(feedback) = &*rx.borrow() {
+                    feedback2model(feedback.as_ref()).ok()
+                } else {
+                    None
+                };
+                (id.clone(), model)
+            })
             .collect::<Vec<_>>()
     }
 
     #[must_use]
-    pub async fn provider(&self) -> Option<Arc<dyn UpdateProvider<UpdateModel, FeedbackModel>>> {
+    pub async fn provider(&self) -> Option<Arc<dyn UpdateProvider>> {
         self.inner.read().await.provider.clone()
     }
 }
@@ -192,6 +195,7 @@ impl<UpdateModel, FeedbackModel> Default for Updates<UpdateModel, FeedbackModel>
         Self {
             inner: Arc::new(RwLock::new(UpdatesInner {
                 model2update: Arc::new(|_model| Err(UpdateError::UpdateProviderNotConfigured)),
+                feedback2model: Arc::new(|_feedback| Err(UpdateError::UpdateProviderNotConfigured)),
                 provider: None,
                 available: Vec::new(),
                 feedback: HashMap::new(),
@@ -207,11 +211,17 @@ pub struct ActiveUpdate {
     pub progress: Option<u8>,
 }
 
-pub trait UpdateDescriptor<Model>: std::fmt::Debug + Sync + Send {
-    fn as_any(&self) -> &dyn std::any::Any;
+pub trait FromModel<Model> {
     fn from_model(model: &Model) -> Self
     where
         Self: Sized;
+}
+
+pub trait ToModel<Model> {
+    fn to_model(update_feedback: &dyn UpdateFeedback) -> Model;
+}
+pub trait UpdateDescriptor: std::fmt::Debug + Sync + Send {
+    fn as_any(&self) -> &dyn std::any::Any;
 
     fn id(&self) -> String;
     fn update_name(&self) -> String;
@@ -258,15 +268,13 @@ pub trait UpdateDescriptor<Model>: std::fmt::Debug + Sync + Send {
     }
 }
 
-pub trait UpdateFeedback<Model>: std::fmt::Debug + Sync + Send {
-    fn to_model(&self) -> Model;
-
+pub trait UpdateFeedback: std::fmt::Debug + Sync + Send {
     fn phase(&self) -> Phase;
     fn status(&self) -> Status;
     fn progress(&self) -> Option<u8> {
         None
     }
-    fn subprogress(&self) -> Option<Vec<Box<dyn UpdateFeedback<Model>>>> {
+    fn subprogress(&self) -> Option<Vec<Box<dyn UpdateFeedback>>> {
         None
     }
     fn step(&self) -> Option<String> {
@@ -284,9 +292,7 @@ pub trait UpdateFeedback<Model>: std::fmt::Debug + Sync + Send {
 // UpdateFeedback traits.
 // Pending updates are managed by the SOVD server and the updater is called any
 // time an update should be prepared or executed.
-pub trait UpdateProvider<UpdateModel: 'static, FeedbackModel: 'static>:
-    Send + Sync + 'static
-{
+pub trait UpdateProvider: Send + Sync + 'static {
     /// Start prepare phase of an update. This may involve downloading necessary files,
     /// verifying integrity, and performing any other preparatory steps required before
     /// the update can be executed.
@@ -295,8 +301,8 @@ pub trait UpdateProvider<UpdateModel: 'static, FeedbackModel: 'static>:
     /// todo
     fn prepare(
         &self,
-        update: &dyn UpdateDescriptor<UpdateModel>,
-        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback<FeedbackModel>>>>,
+        update: &dyn UpdateDescriptor,
+        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback>>>,
     ) -> Result<(), UpdateError>;
     /// Start execute phase of an update. This will perform the actual update process,
     ///
@@ -304,8 +310,8 @@ pub trait UpdateProvider<UpdateModel: 'static, FeedbackModel: 'static>:
     /// todo
     fn execute(
         &self,
-        update: &dyn UpdateDescriptor<UpdateModel>,
-        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback<FeedbackModel>>>>,
+        update: &dyn UpdateDescriptor,
+        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback>>>,
     ) -> Result<(), UpdateError>;
     /// Start unattended update process. This will perform the prepare and execute phases of an update
     ///
@@ -313,8 +319,8 @@ pub trait UpdateProvider<UpdateModel: 'static, FeedbackModel: 'static>:
     /// todo
     fn automated(
         &self,
-        _update: &dyn UpdateDescriptor<UpdateModel>,
-        _feedback: watch::Sender<Option<Arc<dyn UpdateFeedback<FeedbackModel>>>>,
+        _update: &dyn UpdateDescriptor,
+        _feedback: watch::Sender<Option<Arc<dyn UpdateFeedback>>>,
     ) -> Result<(), UpdateError> {
         Err(UpdateError::AutomatedUpdateNotSupported)
     }
