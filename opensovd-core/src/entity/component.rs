@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+//use crate::{UpdateDescriptor, UpdateFeedback, UpdateProvider, Updates};
 use crate::bulkdata::BulkDataProvider;
 use crate::data::DataProvider;
 use crate::entity::EntityRef;
@@ -20,6 +21,7 @@ pub struct Component {
     translation_id: Option<String>,
     data_provider: Option<Box<dyn DataProvider>>,
     bulkdata_provider: Option<Arc<dyn BulkDataProvider>>,
+    //    update_provider: Option<Arc<dyn UpdateProvider>>,
 }
 
 impl fmt::Debug for Component {
@@ -52,6 +54,7 @@ impl Component {
             translation_id: None,
             data_provider: None,
             bulkdata_provider: None,
+            //            update_provider: None,
         }
     }
 

@@ -15,8 +15,9 @@
 use std::sync::Arc;
 
 use futures::StreamExt as _;
+use opensovd_core::ToModel;
 use opensovd_core::{
-    App, BulkDataProvider as _, Component, Phase, Status, UpdateDescriptor, UpdateError,
+    App, BulkDataProvider as _, Component, FromModel, Phase, Status, UpdateDescriptor, UpdateError,
     UpdateFeedback, UpdateProvider,
 };
 use opensovd_mocks::InMemoryBulkDataProvider;
@@ -55,23 +56,7 @@ struct Update {
     payload: Arc<RwLock<Vec<Payload>>>,
 }
 
-impl UpdateDescriptor<UpdateDetail> for Update {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn id(&self) -> String {
-        self.id.clone()
-    }
-
-    fn update_name(&self) -> String {
-        self.name.clone()
-    }
-
-    fn size(&self) -> u64 {
-        self.size as u64
-    }
-
+impl FromModel<UpdateDetail> for Update {
     fn from_model(model: &UpdateDetail) -> Self {
         let mut payload = Vec::new();
         for target in &model.targets {
@@ -91,6 +76,24 @@ impl UpdateDescriptor<UpdateDetail> for Update {
     }
 }
 
+impl UpdateDescriptor for Update {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn update_name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn size(&self) -> u64 {
+        self.size as u64
+    }
+}
+
 // ── Feedback ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
@@ -101,7 +104,7 @@ struct Feedback {
     step: Option<String>,
 }
 
-impl UpdateFeedback<UpdateStatus> for Feedback {
+impl UpdateFeedback for Feedback {
     fn phase(&self) -> Phase {
         self.phase.clone()
     }
@@ -117,13 +120,15 @@ impl UpdateFeedback<UpdateStatus> for Feedback {
     fn step(&self) -> Option<String> {
         self.step.clone()
     }
+}
 
-    fn to_model(&self) -> UpdateStatus {
-        let phase = match self.phase {
+impl ToModel<UpdateStatus> for Feedback {
+    fn to_model(feedback: &dyn UpdateFeedback) -> UpdateStatus {
+        let phase = match feedback.phase() {
             Phase::Prepare => ModelPhase::Prepare,
             Phase::Execute => ModelPhase::Execute,
         };
-        let status = match &self.status {
+        let status = match &feedback.status() {
             Status::Pending => ModelStatus::Pending,
             Status::InProgress => ModelStatus::InProgress,
             Status::Failed(_) => ModelStatus::Failed,
@@ -132,8 +137,8 @@ impl UpdateFeedback<UpdateStatus> for Feedback {
         UpdateStatus {
             phase,
             status,
-            progress: self.progress,
-            step: self.step.clone(),
+            progress: feedback.progress(),
+            step: feedback.step(),
             subprogress: None,
             step_translation_id: None,
             error: None,
@@ -159,7 +164,7 @@ impl Provider {
     fn run_phase(
         phase: Phase,
         messages: Vec<String>,
-        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback<UpdateStatus>>>>,
+        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback>>>,
     ) {
         tokio::spawn(async move {
             let total = messages.len();
@@ -208,11 +213,11 @@ impl Provider {
     }
 }
 
-impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
+impl UpdateProvider for Provider {
     fn prepare(
         &self,
-        update: &dyn UpdateDescriptor<UpdateDetail>,
-        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback<UpdateStatus>>>>,
+        update: &dyn UpdateDescriptor,
+        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback>>>,
     ) -> Result<(), UpdateError> {
         let update = update
             .as_any()
@@ -225,7 +230,7 @@ impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
         tokio::spawn(async move {
             for payload in payload.write().await.iter_mut() {
                 if let Payload::Unresolved(url) = payload {
-                    match Self::fetch_payload(&store, url, &mut remaining_size).await {
+                    match Self::fetch_payload(&store, url.as_str(), &mut remaining_size).await {
                         Ok(fetched) => {
                             let fetched = Arc::new(fetched);
                             *payload = Payload::Downloaded(Arc::clone(&fetched));
@@ -262,8 +267,8 @@ impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
 
     fn execute(
         &self,
-        update: &dyn UpdateDescriptor<UpdateDetail>,
-        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback<UpdateStatus>>>>,
+        update: &dyn UpdateDescriptor,
+        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback>>>,
     ) -> Result<(), UpdateError> {
         let update = update
             .as_any()
@@ -291,8 +296,8 @@ impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
 
     fn automated(
         &self,
-        update: &dyn UpdateDescriptor<UpdateDetail>,
-        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback<UpdateStatus>>>>,
+        update: &dyn UpdateDescriptor,
+        feedback: watch::Sender<Option<Arc<dyn UpdateFeedback>>>,
     ) -> Result<(), UpdateError> {
         let update = update
             .as_any()
@@ -306,7 +311,7 @@ impl UpdateProvider<UpdateDetail, UpdateStatus> for Provider {
         tokio::spawn(async move {
             for payload in payload.write().await.iter_mut() {
                 if let Payload::Unresolved(url) = payload {
-                    match Self::fetch_payload(&store, url, &mut remaining_size).await {
+                    match Self::fetch_payload(&store, url.as_str(), &mut remaining_size).await {
                         Ok(fetched) => {
                             let fetched = Arc::new(fetched);
                             *payload = Payload::Downloaded(Arc::clone(&fetched));
@@ -368,7 +373,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         guard.add_app(app);
     }
 
-    let updates = Updates::new::<Update, Provider>(Provider { store });
+    let updates = Updates::new::<Update, Feedback>(Provider { store });
 
     let listener = TcpListener::bind("127.0.0.1:7690").await?;
     let server = Server::builder()

@@ -14,7 +14,7 @@ pub enum UpdateOrigins {
     Proximity,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub enum Phase {
     #[serde(rename = "prepare")]
@@ -34,7 +34,7 @@ pub struct Progress {
     pub error: Option<GenericError>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub enum Status {
     #[serde(rename = "pending")]

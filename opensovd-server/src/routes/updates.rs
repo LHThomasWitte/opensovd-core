@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
 
+use std::ops::Deref;
+
 use axum::{
     Router,
     extract::State,
@@ -10,10 +12,13 @@ use axum::{
 };
 use axum_extra::extract::{Query, WithRejection};
 use http::{HeaderValue, request::Parts};
-use opensovd_core::{Phase, Status, UpdateError};
+use opensovd_core::UpdateError;
 use opensovd_models::{
     Response,
-    updates::{AvailableUpdates, UpdateDetail, UpdateDetailQuery, UpdateOrigins, UpdateStatus},
+    updates::{
+        AvailableUpdates, Phase, Status, UpdateDetail, UpdateDetailQuery, UpdateOrigins,
+        UpdateStatus,
+    },
 };
 
 use super::error::Result;
@@ -149,7 +154,7 @@ where
         .updates
         .feedback(&update_package_id)
         .await
-        .is_some_and(|feedback| feedback.status() == Status::InProgress)
+        .is_some_and(|feedback| feedback.status == Status::InProgress)
     {
         return Ok(StatusCode::METHOD_NOT_ALLOWED);
     }
@@ -170,9 +175,8 @@ where
         .feedback(&update_package_id)
         .await
         .map(|feedback| {
-            let data = feedback.to_model();
             Json(Response {
-                data,
+                data: feedback.deref().clone(),
                 schema: Some(UpdateStatus::schema()),
             })
         })
@@ -196,7 +200,7 @@ where
             feedback
                 .as_ref()
                 .filter(|feedback| {
-                    feedback.phase() == Phase::Execute && feedback.status() == Status::InProgress
+                    feedback.phase == Phase::Execute && feedback.status == Status::InProgress
                 })
                 .map(|_| id.clone())
         })
@@ -252,7 +256,7 @@ where
             feedback
                 .as_ref()
                 .filter(|feedback| {
-                    feedback.phase() == Phase::Execute && feedback.status() == Status::InProgress
+                    feedback.phase == Phase::Execute && feedback.status == Status::InProgress
                 })
                 .map(|_| id.clone())
         })

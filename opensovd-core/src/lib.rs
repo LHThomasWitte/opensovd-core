@@ -24,6 +24,6 @@ pub use discovery::{DiscoveryError, DiscoveryProvider, DiscoveryStream};
 pub use entity::{App, Area, Component, EntityCollection, EntityKind, EntityRef};
 pub use topology::{Topology, TopologyError, TopologyEvent, TopologyReadGuard, TopologyWriteGuard};
 pub use updates::{
-    ActiveUpdate, Phase, Status, UpdateDescriptor, UpdateError, UpdateFeedback, UpdateProvider,
-    Updates,
+    ActiveUpdate, FromModel, Phase, Status, ToModel, UpdateDescriptor, UpdateError, UpdateFeedback,
+    UpdateProvider, Updates,
 };
