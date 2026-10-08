@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::{any::Any, collections::HashMap};
 
 use tokio::sync::{RwLock, watch};
 
@@ -20,6 +20,8 @@ pub enum UpdateError {
     ProviderError(String),
     #[error("Update ID conflicts with existing ID: {0}")]
     UpdateIdConflict(String),
+    #[error("Incompatible model")]
+    IncompatibleModel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,40 +53,49 @@ impl PartialEq for Status {
 
 type FeedbackSender = watch::Sender<Option<Arc<dyn UpdateFeedback>>>;
 type FeedbackReceiver = watch::Receiver<Option<Arc<dyn UpdateFeedback>>>;
-type Model2Update<UpdateModel> =
-    Arc<dyn Fn(&UpdateModel) -> Result<Arc<dyn UpdateDescriptor>, UpdateError> + Send + Sync>;
-type Feedback2Model<FeedbackModel> =
-    Arc<dyn Fn(&dyn UpdateFeedback) -> Result<Arc<FeedbackModel>, UpdateError> + Send + Sync>;
+type Model2Update =
+    Arc<dyn Fn(&dyn Any) -> Result<Arc<dyn UpdateDescriptor>, UpdateError> + Send + Sync>;
+type Feedback2Model =
+    Arc<dyn Fn(&dyn UpdateFeedback) -> Result<Arc<dyn Any>, UpdateError> + Send + Sync>;
 
-struct UpdatesInner<UpdateModel, FeedbackModel> {
+struct UpdatesInner {
     provider: Option<Arc<dyn UpdateProvider>>,
     available: Vec<Arc<dyn UpdateDescriptor>>,
     feedback: HashMap<String, (FeedbackSender, FeedbackReceiver)>,
     // model2update stores the method UpdateModel -> UpdateImpl from the
     // UpdateDescriptor trait as a workaround since the actual UpdateImpl type
     // implementing it is erased from Updates.
-    model2update: Model2Update<UpdateModel>,
-    feedback2model: Feedback2Model<FeedbackModel>,
+    model2update: Model2Update,
+    feedback2model: Feedback2Model,
 }
 
 #[derive(Clone)]
-pub struct Updates<UpdateModel, FeedbackModel> {
-    inner: Arc<RwLock<UpdatesInner<UpdateModel, FeedbackModel>>>,
+pub struct Updates {
+    inner: Arc<RwLock<UpdatesInner>>,
 }
 
-impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, FeedbackModel> {
+impl Updates {
     #[must_use]
-    pub fn new<UpdateImpl, FeedbackImpl>(provider: impl UpdateProvider + 'static) -> Self
+    pub fn new<UpdateImpl, UpdateModel, FeedbackImpl, FeedbackModel>(
+        provider: impl UpdateProvider + 'static,
+    ) -> Self
     where
         UpdateImpl: UpdateDescriptor + FromModel<UpdateModel> + 'static,
         FeedbackImpl: ToModel<FeedbackModel> + 'static,
+        UpdateModel: 'static,
+        FeedbackModel: 'static,
     {
         Self {
             inner: Arc::new(RwLock::new(UpdatesInner {
                 provider: Some(Arc::new(provider)),
                 available: Vec::new(),
                 feedback: HashMap::new(),
-                model2update: Arc::new(|model| Ok(Arc::new(UpdateImpl::from_model(model)))),
+                model2update: Arc::new(|model| {
+                    let model = model
+                        .downcast_ref::<UpdateModel>()
+                        .ok_or(UpdateError::IncompatibleModel)?;
+                    Ok(Arc::new(UpdateImpl::from_model(model)))
+                }),
                 feedback2model: Arc::new(|feedback| Ok(Arc::new(FeedbackImpl::to_model(feedback)))),
             })),
         }
@@ -96,7 +107,10 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
     ///
     /// Returns `UpdateProviderNotConfigured` if no update provider is
     /// configured.
-    pub async fn push(&self, update: &UpdateModel) -> Result<String, UpdateError> {
+    pub async fn push<UpdateModel: Any>(
+        &self,
+        update: &UpdateModel,
+    ) -> Result<String, UpdateError> {
         let mut inner = self.inner.write().await;
         let item = (inner.model2update)(update)?;
         let id = item.id().clone();
@@ -148,7 +162,10 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
     }
 
     #[must_use]
-    pub async fn feedback(&self, update_package_id: &str) -> Option<Arc<FeedbackModel>> {
+    pub async fn feedback<FeedbackModel: Any + Clone>(
+        &self,
+        update_package_id: &str,
+    ) -> Option<Arc<FeedbackModel>> {
         #[expect(clippy::clone_on_ref_ptr)]
         let feedback2model = self.inner.read().await.feedback2model.clone();
         self.inner
@@ -157,15 +174,20 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
             .feedback
             .get(update_package_id)
             .and_then(|(_, rx)| {
-                if let Some(feedback) = &*rx.borrow() {
-                    feedback2model(feedback.as_ref()).ok()
+                if let Some(feedback) = &*rx.borrow()
+                    && let Ok(model) = feedback2model(feedback.as_ref())
+                    && let Some(model) = model.downcast_ref::<FeedbackModel>()
+                {
+                    Some(Arc::new(model.clone()))
                 } else {
                     None
                 }
             })
     }
 
-    pub async fn all_feedback(&self) -> Vec<(String, Option<Arc<FeedbackModel>>)> {
+    pub async fn all_feedback<FeedbackModel: Any + Clone>(
+        &self,
+    ) -> Vec<(String, Option<Arc<FeedbackModel>>)> {
         #[expect(clippy::clone_on_ref_ptr)]
         let feedback2model = self.inner.read().await.feedback2model.clone();
         self.inner
@@ -174,8 +196,11 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
             .feedback
             .iter()
             .map(|(id, (_tx, rx))| {
-                let model = if let Some(feedback) = &*rx.borrow() {
-                    feedback2model(feedback.as_ref()).ok()
+                let model = if let Some(feedback) = &*rx.borrow()
+                    && let Ok(m) = feedback2model(feedback.as_ref())
+                    && let Some(m) = m.downcast_ref::<FeedbackModel>()
+                {
+                    Some(Arc::new(m.clone()))
                 } else {
                     None
                 };
@@ -190,7 +215,7 @@ impl<UpdateModel: 'static, FeedbackModel: 'static> Updates<UpdateModel, Feedback
     }
 }
 
-impl<UpdateModel, FeedbackModel> Default for Updates<UpdateModel, FeedbackModel> {
+impl Default for Updates {
     fn default() -> Self {
         Self {
             inner: Arc::new(RwLock::new(UpdatesInner {
@@ -221,7 +246,7 @@ pub trait ToModel<Model> {
     fn to_model(update_feedback: &dyn UpdateFeedback) -> Model;
 }
 pub trait UpdateDescriptor: std::fmt::Debug + Sync + Send {
-    fn as_any(&self) -> &dyn std::any::Any;
+    fn as_any(&self) -> &dyn Any;
 
     fn id(&self) -> String;
     fn update_name(&self) -> String;

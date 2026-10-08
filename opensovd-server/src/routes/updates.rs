@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ops::Deref;
+use std::{ops::Deref, sync::Arc};
 
 use axum::{
     Router,
@@ -154,7 +154,7 @@ where
         .updates
         .feedback(&update_package_id)
         .await
-        .is_some_and(|feedback| feedback.status == Status::InProgress)
+        .is_some_and(|feedback: Arc<UpdateStatus>| feedback.status == Status::InProgress)
     {
         return Ok(StatusCode::METHOD_NOT_ALLOWED);
     }
@@ -174,7 +174,7 @@ where
         .updates
         .feedback(&update_package_id)
         .await
-        .map(|feedback| {
+        .map(|feedback: Arc<UpdateStatus>| {
             Json(Response {
                 data: feedback.deref().clone(),
                 schema: Some(UpdateStatus::schema()),
@@ -193,7 +193,7 @@ where
 {
     if let Some(id) = state
         .updates
-        .all_feedback()
+        .all_feedback::<UpdateStatus>()
         .await
         .into_iter()
         .find_map(|(id, feedback)| {
@@ -249,7 +249,7 @@ where
 {
     if let Some(id) = state
         .updates
-        .all_feedback()
+        .all_feedback::<UpdateStatus>()
         .await
         .into_iter()
         .find_map(|(id, feedback)| {

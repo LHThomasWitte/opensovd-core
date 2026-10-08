@@ -51,14 +51,11 @@ use axum::{
     http::{Uri, request::Parts},
 };
 use http::header::HOST;
-use opensovd_core::Topology;
-use opensovd_models::updates::{UpdateDetail, UpdateStatus};
+use opensovd_core::{Topology, Updates};
 pub use opensovd_models::version::{VendorInfo, VersionInfo};
 use serde::Serialize;
 
 use crate::schema::JsonSchema;
-
-pub type Updates = opensovd_core::Updates<UpdateDetail, UpdateStatus>;
 
 #[derive(Clone)]
 pub struct AppState<V> {
