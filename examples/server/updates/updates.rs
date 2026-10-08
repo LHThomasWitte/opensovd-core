@@ -373,7 +373,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         guard.add_app(app);
     }
 
-    let updates = Updates::new::<Update, Feedback>(Provider { store });
+    let updates = Updates::new::<Update, UpdateDetail, Feedback, UpdateStatus>(Provider { store });
 
     let listener = TcpListener::bind("127.0.0.1:7690").await?;
     let server = Server::builder()

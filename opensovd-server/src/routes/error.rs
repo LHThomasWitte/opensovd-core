@@ -146,7 +146,7 @@ fn update_error(e: &UpdateError) -> (StatusCode, ErrorDetails) {
             }
             .into(),
         ),
-        UpdateError::UpdateProviderNotConfigured => (
+        UpdateError::UpdateProviderNotConfigured | UpdateError::IncompatibleModel => (
             StatusCode::INTERNAL_SERVER_ERROR,
             GenericError::new(ErrorCode::SovdServerMisconfigured, e.to_string()).into(),
         ),
