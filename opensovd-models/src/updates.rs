@@ -129,3 +129,12 @@ pub struct UpdateStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<GenericError>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathParams {
+    #[serde(default)]
+    pub entity_collection: Option<String>,
+    #[serde(default)]
+    pub entity_id: Option<String>,
+    pub update_package_id: String,
+}
