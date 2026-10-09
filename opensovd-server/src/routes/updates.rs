@@ -5,19 +5,19 @@ use std::{ops::Deref, sync::Arc};
 
 use axum::{
     Router,
-    extract::State,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::Json,
     routing::{get, put},
 };
 use axum_extra::extract::{Query, WithRejection};
 use http::{HeaderValue, request::Parts};
-use opensovd_core::{Topology, UpdateError};
+use opensovd_core::{Topology, TopologyReadGuard, UpdateError, Updates};
 use opensovd_models::{
     Response,
     updates::{
-        AvailableUpdates, Phase, Status, UpdateDetail, UpdateDetailQuery, UpdateOrigins,
-        UpdateStatus,
+        AvailableUpdates, PathParams, Phase, Status, UpdateDetail, UpdateDetailQuery,
+        UpdateOrigins, UpdateStatus,
     },
 };
 
@@ -32,7 +32,15 @@ where
     Router::new()
         .route("/updates", get(list_updates).post(create_updates))
         .route(
+            "/{entity-collection}/{entity-id}/updates",
+            get(list_updates).post(create_updates),
+        )
+        .route(
             "/updates/{update-package-id}",
+            get(get_update_package).delete(delete_update_package),
+        )
+        .route(
+            "/{entity-collection}/{entity-id}/updates/{update-package-id}",
             get(get_update_package).delete(delete_update_package),
         )
         .route(
@@ -40,7 +48,15 @@ where
             get(update_package_status),
         )
         .route(
+            "/{entity-collection}/{entity-id}/updates/{update-package-id}/status",
+            get(update_package_status),
+        )
+        .route(
             "/updates/{update-package-id}/automated",
+            put(update_package_automated),
+        )
+        .route(
+            "/{entity-collection}/{entity-id}/updates/{update-package-id}/automated",
             put(update_package_automated),
         )
         .route(
@@ -48,41 +64,55 @@ where
             put(update_package_execute),
         )
         .route(
+            "/{entity-collection}/{entity-id}/updates/{update-package-id}/execute",
+            put(update_package_execute),
+        )
+        .route(
             "/updates/{update-package-id}/prepare",
+            put(update_package_prepare),
+        )
+        .route(
+            "/{entity-collection}/{entity-id}/updates/{update-package-id}/prepare",
             put(update_package_prepare),
         )
 }
 
 async fn list_updates(
+    Path(path_params): Path<Option<(String, String)>>,
     State(topology): State<Topology>,
 ) -> Result<Json<Response<AvailableUpdates>>> {
     let topo = topology.read().await;
     Ok(Json(Response {
         data: AvailableUpdates {
-            items: topo
-                .get_updates()
-                .ok_or(UpdateError::UpdateProviderNotConfigured)?
-                .available()
-                .await
-                .iter()
-                .map(|u| u.id().clone())
-                .collect(),
+            items: get_updates(
+                topo,
+                path_params.as_ref().map(|(fst, _)| fst),
+                path_params.as_ref().map(|(_, snd)| snd),
+            )?
+            .available()
+            .await
+            .iter()
+            .map(|u| u.id().clone())
+            .collect(),
         },
         schema: None,
     }))
 }
 
 async fn create_updates(
+    Path(path_params): Path<Option<(String, String)>>,
     State(topology): State<Topology>,
     parts: Parts,
     Json(body): Json<UpdateDetail>,
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
-    let id = topo
-        .get_updates()
-        .ok_or(UpdateError::UpdateProviderNotConfigured)?
-        .push(&body)
-        .await?;
+    let id = get_updates(
+        topo,
+        path_params.as_ref().map(|(fst, _)| fst),
+        path_params.as_ref().map(|(_, snd)| snd),
+    )?
+    .push(&body)
+    .await?;
     let versioned_uri = super::versioned_uri(&parts);
 
     let mut headers = HeaderMap::new();
@@ -97,15 +127,16 @@ async fn create_updates(
 }
 
 async fn get_update_package(
-    axum::extract::Path(update_package_id): axum::extract::Path<String>,
+    Path(PathParams {
+        entity_collection,
+        entity_id,
+        update_package_id,
+    }): Path<PathParams>,
     State(topology): State<Topology>,
     WithRejection(Query(query), _): WithRejection<Query<UpdateDetailQuery>, Error>,
 ) -> Result<Json<Response<UpdateDetail>>> {
-    topology
-        .read()
-        .await
-        .get_updates()
-        .ok_or(UpdateError::UpdateProviderNotConfigured)?
+    let topo = topology.read().await;
+    get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?
         .find(&update_package_id)
         .await
         .map_or_else(
@@ -150,14 +181,15 @@ async fn get_update_package(
 }
 
 async fn delete_update_package(
-    axum::extract::Path(update_package_id): axum::extract::Path<String>,
+    Path(PathParams {
+        entity_collection,
+        entity_id,
+        update_package_id,
+    }): Path<PathParams>,
     State(topology): State<Topology>,
 ) -> Result<StatusCode> {
-    let updates = topology
-        .read()
-        .await
-        .get_updates()
-        .ok_or(UpdateError::UpdateProviderNotConfigured)?;
+    let topo = topology.read().await;
+    let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
     // if the update's status is InProgress, we cannot delete it
     if updates
         .feedback(&update_package_id)
@@ -172,14 +204,15 @@ async fn delete_update_package(
 }
 
 async fn update_package_status(
-    axum::extract::Path(update_package_id): axum::extract::Path<String>,
+    Path(PathParams {
+        entity_collection,
+        entity_id,
+        update_package_id,
+    }): Path<PathParams>,
     State(topology): State<Topology>,
 ) -> Result<Json<Response<UpdateStatus>>> {
-    let updates = topology
-        .read()
-        .await
-        .get_updates()
-        .ok_or(UpdateError::UpdateProviderNotConfigured)?;
+    let topo = topology.read().await;
+    let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
     updates
         .feedback(&update_package_id)
         .await
@@ -193,15 +226,16 @@ async fn update_package_status(
 }
 
 async fn update_package_automated(
-    axum::extract::Path(update_package_id): axum::extract::Path<String>,
+    Path(PathParams {
+        entity_collection,
+        entity_id,
+        update_package_id,
+    }): Path<PathParams>,
     parts: Parts,
     State(topology): State<Topology>,
 ) -> Result<(StatusCode, HeaderMap)> {
-    let updates = topology
-        .read()
-        .await
-        .get_updates()
-        .ok_or(UpdateError::UpdateProviderNotConfigured)?;
+    let topo = topology.read().await;
+    let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
     if let Some(id) = updates
         .all_feedback::<UpdateStatus>()
         .await
@@ -248,15 +282,16 @@ async fn update_package_automated(
 }
 
 async fn update_package_execute(
-    axum::extract::Path(update_package_id): axum::extract::Path<String>,
+    Path(PathParams {
+        entity_collection,
+        entity_id,
+        update_package_id,
+    }): Path<PathParams>,
     parts: Parts,
     State(topology): State<Topology>,
 ) -> Result<(StatusCode, HeaderMap)> {
-    let updates = topology
-        .read()
-        .await
-        .get_updates()
-        .ok_or(UpdateError::UpdateProviderNotConfigured)?;
+    let topo = topology.read().await;
+    let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
     if let Some(id) = updates
         .all_feedback::<UpdateStatus>()
         .await
@@ -299,15 +334,16 @@ async fn update_package_execute(
 }
 
 async fn update_package_prepare(
-    axum::extract::Path(update_package_id): axum::extract::Path<String>,
+    Path(PathParams {
+        entity_collection,
+        entity_id,
+        update_package_id,
+    }): Path<PathParams>,
     parts: Parts,
     State(topology): State<Topology>,
 ) -> Result<(StatusCode, HeaderMap)> {
-    let updates = topology
-        .read()
-        .await
-        .get_updates()
-        .ok_or(UpdateError::UpdateProviderNotConfigured)?;
+    let topo = topology.read().await;
+    let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
     let update = updates
         .find(&update_package_id)
         .await
@@ -331,4 +367,36 @@ async fn update_package_prepare(
     headers.insert("Location", location);
 
     Ok((StatusCode::ACCEPTED, headers))
+}
+
+fn get_updates(
+    topo: TopologyReadGuard,
+    entity_collection: Option<&String>,
+    entity_id: Option<&String>,
+) -> Result<Updates> {
+    let updates = match (entity_collection, entity_id) {
+        (Some(s), Some(entity_id)) if s == "components" => {
+            let component = topo
+                .get_component(entity_id)
+                .map_err(|_| Error::EntityNotFound(entity_id.clone()))?;
+            component
+                .updates()
+                .ok_or_else(|| Error::ProviderNotAvailable("updates".into()))
+        }
+        (Some(s), Some(entity_id)) if s == "apps" => {
+            let app = topo
+                .get_app(entity_id)
+                .map_err(|_| Error::EntityNotFound(entity_id.clone()))?;
+            app.updates()
+                .ok_or_else(|| Error::ProviderNotAvailable("updates".into()))
+        }
+        (None, None) => topo
+            .get_updates()
+            .ok_or_else(|| Error::ProviderNotAvailable("updates".into())),
+        _ => Err(Error::EntityNotFound(format!(
+            "entity_collection: {entity_collection:?}, entity_id: {entity_id:?}",
+        ))),
+    };
+    drop(topo);
+    updates
 }

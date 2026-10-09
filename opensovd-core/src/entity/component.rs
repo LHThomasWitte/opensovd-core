@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-//use crate::{UpdateDescriptor, UpdateFeedback, UpdateProvider, Updates};
 use crate::bulkdata::BulkDataProvider;
 use crate::data::DataProvider;
 use crate::entity::EntityRef;
 use crate::log::LogProvider;
+use crate::{FromModel, ToModel, UpdateDescriptor, UpdateProvider, Updates};
 
 pub struct Component {
     entity_ref: EntityRef,
@@ -23,6 +23,7 @@ pub struct Component {
     data_provider: Option<Box<dyn DataProvider>>,
     bulkdata_provider: Option<Arc<dyn BulkDataProvider>>,
     log_provider: Option<Arc<dyn LogProvider>>,
+    update_provider: Option<Updates>,
 }
 
 impl fmt::Debug for Component {
@@ -40,6 +41,10 @@ impl fmt::Debug for Component {
                 &self.bulkdata_provider.as_ref().map(|_| "..."),
             )
             .field("log_provider", &self.log_provider.as_ref().map(|_| "..."))
+            .field(
+                "update_provider",
+                &self.update_provider.as_ref().map(|_| "..."),
+            )
             .finish()
     }
 }
@@ -57,6 +62,7 @@ impl Component {
             data_provider: None,
             bulkdata_provider: None,
             log_provider: None,
+            update_provider: None,
         }
     }
 
@@ -93,6 +99,25 @@ impl Component {
     #[must_use]
     pub fn with_log_provider(mut self, provider: impl LogProvider) -> Self {
         self.log_provider = Some(Arc::new(provider));
+        self
+    }
+
+    #[must_use]
+    pub fn with_update_provider<
+        UpdateModel: UpdateDescriptor + FromModel<UpdateImpl> + 'static,
+        UpdateImpl: 'static,
+        FeedbackModel: ToModel<FeedbackImpl> + 'static,
+        FeedbackImpl: 'static,
+    >(
+        mut self,
+        provider: impl UpdateProvider,
+    ) -> Self {
+        self.update_provider = Some(Updates::new::<
+            UpdateModel,
+            UpdateImpl,
+            FeedbackModel,
+            FeedbackImpl,
+        >(provider));
         self
     }
 
@@ -142,6 +167,11 @@ impl Component {
     #[must_use]
     pub fn log_provider(&self) -> Option<Arc<dyn LogProvider>> {
         self.log_provider.clone()
+    }
+
+    #[must_use]
+    pub fn updates(&self) -> Option<Updates> {
+        self.update_provider.clone()
     }
 
     #[must_use]
