@@ -12,7 +12,7 @@ use axum::{
 };
 use axum_extra::extract::{Query, WithRejection};
 use http::{HeaderValue, request::Parts};
-use opensovd_core::UpdateError;
+use opensovd_core::{Topology, UpdateError};
 use opensovd_models::{
     Response,
     updates::{
@@ -53,14 +53,15 @@ where
         )
 }
 
-async fn list_updates<V>(State(state): State<AppState<V>>) -> Json<Response<AvailableUpdates>>
-where
-    V: Clone + Send + Sync + 'static,
-{
-    Json(Response {
+async fn list_updates(
+    State(topology): State<Topology>,
+) -> Result<Json<Response<AvailableUpdates>>> {
+    let topo = topology.read().await;
+    Ok(Json(Response {
         data: AvailableUpdates {
-            items: state
-                .updates
+            items: topo
+                .get_updates()
+                .ok_or(UpdateError::UpdateProviderNotConfigured)?
                 .available()
                 .await
                 .iter()
@@ -68,18 +69,20 @@ where
                 .collect(),
         },
         schema: None,
-    })
+    }))
 }
 
-async fn create_updates<V>(
-    State(state): State<AppState<V>>,
+async fn create_updates(
+    State(topology): State<Topology>,
     parts: Parts,
     Json(body): Json<UpdateDetail>,
-) -> Result<(StatusCode, HeaderMap)>
-where
-    V: Clone + Send + Sync + 'static,
-{
-    let id = state.updates.push(&body).await?;
+) -> Result<(StatusCode, HeaderMap)> {
+    let topo = topology.read().await;
+    let id = topo
+        .get_updates()
+        .ok_or(UpdateError::UpdateProviderNotConfigured)?
+        .push(&body)
+        .await?;
     let versioned_uri = super::versioned_uri(&parts);
 
     let mut headers = HeaderMap::new();
@@ -93,65 +96,70 @@ where
     Ok((StatusCode::CREATED, headers))
 }
 
-async fn get_update_package<V>(
+async fn get_update_package(
     axum::extract::Path(update_package_id): axum::extract::Path<String>,
-    State(state): State<AppState<V>>,
+    State(topology): State<Topology>,
     WithRejection(Query(query), _): WithRejection<Query<UpdateDetailQuery>, Error>,
-) -> Result<Json<Response<UpdateDetail>>>
-where
-    V: Clone + Send + Sync + 'static,
-{
-    state.updates.find(&update_package_id).await.map_or_else(
-        || Err(Error::EntityNotFound(update_package_id)),
-        |update| {
-            Ok(Json(Response {
-                data: UpdateDetail {
-                    id: Some(update.id()),
-                    update_name: update.update_name(),
-                    automated: update.automated(),
-                    origin: update.origin().as_ref().map(|origins| {
-                        origins
-                            .iter()
-                            .filter_map(|o| match o.as_str() {
-                                "remote" => Some(UpdateOrigins::Remote),
-                                "proximity" => Some(UpdateOrigins::Proximity),
-                                _ => None,
-                            })
-                            .collect()
-                    }),
-                    update_translation_id: update.update_translation_id(),
-                    notes: update.notes(),
-                    notes_translation_id: update.notes_translation_id(),
-                    user_activity: update.user_activity(),
-                    user_activity_translation_id: update.user_activity_translation_id(),
-                    preconditions: update.preconditions(),
-                    preconditions_translation_id: update.preconditions_translation_id(),
-                    execution_conditions: update.execution_conditions(),
-                    duration: update.duration(),
-                    size: update.size(),
-                    updated_components: update.updated_components(),
-                    affected_components: update.affected_components(),
-                    // the following fields are not included in the response
-                    authentication: None,
-                    authentication_token: None,
-                    targets: vec![],
-                },
-                schema: query.include_schema.then_some(UpdateDetail::schema()),
-            }))
-        },
-    )
+) -> Result<Json<Response<UpdateDetail>>> {
+    topology
+        .read()
+        .await
+        .get_updates()
+        .ok_or(UpdateError::UpdateProviderNotConfigured)?
+        .find(&update_package_id)
+        .await
+        .map_or_else(
+            || Err(Error::EntityNotFound(update_package_id)),
+            |update| {
+                Ok(Json(Response {
+                    data: UpdateDetail {
+                        id: Some(update.id()),
+                        update_name: update.update_name(),
+                        automated: update.automated(),
+                        origin: update.origin().as_ref().map(|origins| {
+                            origins
+                                .iter()
+                                .filter_map(|o| match o.as_str() {
+                                    "remote" => Some(UpdateOrigins::Remote),
+                                    "proximity" => Some(UpdateOrigins::Proximity),
+                                    _ => None,
+                                })
+                                .collect()
+                        }),
+                        update_translation_id: update.update_translation_id(),
+                        notes: update.notes(),
+                        notes_translation_id: update.notes_translation_id(),
+                        user_activity: update.user_activity(),
+                        user_activity_translation_id: update.user_activity_translation_id(),
+                        preconditions: update.preconditions(),
+                        preconditions_translation_id: update.preconditions_translation_id(),
+                        execution_conditions: update.execution_conditions(),
+                        duration: update.duration(),
+                        size: update.size(),
+                        updated_components: update.updated_components(),
+                        affected_components: update.affected_components(),
+                        // the following fields are not included in the response
+                        authentication: None,
+                        authentication_token: None,
+                        targets: vec![],
+                    },
+                    schema: query.include_schema.then_some(UpdateDetail::schema()),
+                }))
+            },
+        )
 }
 
-async fn delete_update_package<V>(
+async fn delete_update_package(
     axum::extract::Path(update_package_id): axum::extract::Path<String>,
-    State(state): State<AppState<V>>,
-) -> Result<StatusCode>
-where
-    V: Clone + Send + Sync + 'static,
-{
+    State(topology): State<Topology>,
+) -> Result<StatusCode> {
+    let updates = topology
+        .read()
+        .await
+        .get_updates()
+        .ok_or(UpdateError::UpdateProviderNotConfigured)?;
     // if the update's status is InProgress, we cannot delete it
-    if state
-        .updates
+    if updates
         .feedback(&update_package_id)
         .await
         .is_some_and(|feedback: Arc<UpdateStatus>| feedback.status == Status::InProgress)
@@ -159,19 +167,20 @@ where
         return Ok(StatusCode::METHOD_NOT_ALLOWED);
     }
 
-    state.updates.remove(&update_package_id).await;
+    updates.remove(&update_package_id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn update_package_status<V>(
+async fn update_package_status(
     axum::extract::Path(update_package_id): axum::extract::Path<String>,
-    State(state): State<AppState<V>>,
-) -> Result<Json<Response<UpdateStatus>>>
-where
-    V: Clone + Send + Sync + 'static,
-{
-    state
-        .updates
+    State(topology): State<Topology>,
+) -> Result<Json<Response<UpdateStatus>>> {
+    let updates = topology
+        .read()
+        .await
+        .get_updates()
+        .ok_or(UpdateError::UpdateProviderNotConfigured)?;
+    updates
         .feedback(&update_package_id)
         .await
         .map(|feedback: Arc<UpdateStatus>| {
@@ -183,16 +192,17 @@ where
         .ok_or_else(|| Error::EntityNotFound(update_package_id.clone()))
 }
 
-async fn update_package_automated<V>(
+async fn update_package_automated(
     axum::extract::Path(update_package_id): axum::extract::Path<String>,
     parts: Parts,
-    State(state): State<AppState<V>>,
-) -> Result<(StatusCode, HeaderMap)>
-where
-    V: Clone + Send + Sync + 'static,
-{
-    if let Some(id) = state
-        .updates
+    State(topology): State<Topology>,
+) -> Result<(StatusCode, HeaderMap)> {
+    let updates = topology
+        .read()
+        .await
+        .get_updates()
+        .ok_or(UpdateError::UpdateProviderNotConfigured)?;
+    if let Some(id) = updates
         .all_feedback::<UpdateStatus>()
         .await
         .into_iter()
@@ -208,8 +218,7 @@ where
         return Err(UpdateError::UpdateExecutionInProgress(id).into());
     }
 
-    let update = state
-        .updates
+    let update = updates
         .find(&update_package_id)
         .await
         .ok_or_else(|| Error::EntityNotFound(update_package_id.clone()))?;
@@ -218,10 +227,9 @@ where
         return Err(UpdateError::AutomatedUpdateNotSupported.into());
     }
 
-    let feedback = state.updates.feedback_sender(&update_package_id).await;
+    let feedback = updates.feedback_sender(&update_package_id).await;
 
-    state
-        .updates
+    updates
         .provider()
         .await
         .ok_or(UpdateError::UpdateProviderNotConfigured)?
@@ -239,16 +247,17 @@ where
     Ok((StatusCode::ACCEPTED, headers))
 }
 
-async fn update_package_execute<V>(
+async fn update_package_execute(
     axum::extract::Path(update_package_id): axum::extract::Path<String>,
     parts: Parts,
-    State(state): State<AppState<V>>,
-) -> Result<(StatusCode, HeaderMap)>
-where
-    V: Clone + Send + Sync + 'static,
-{
-    if let Some(id) = state
-        .updates
+    State(topology): State<Topology>,
+) -> Result<(StatusCode, HeaderMap)> {
+    let updates = topology
+        .read()
+        .await
+        .get_updates()
+        .ok_or(UpdateError::UpdateProviderNotConfigured)?;
+    if let Some(id) = updates
         .all_feedback::<UpdateStatus>()
         .await
         .into_iter()
@@ -264,16 +273,14 @@ where
         return Err(UpdateError::UpdateExecutionInProgress(id).into());
     }
 
-    let update = state
-        .updates
+    let update = updates
         .find(&update_package_id)
         .await
         .ok_or_else(|| Error::EntityNotFound(update_package_id.clone()))?;
 
-    let feedback = state.updates.feedback_sender(&update_package_id).await;
+    let feedback = updates.feedback_sender(&update_package_id).await;
 
-    state
-        .updates
+    updates
         .provider()
         .await
         .ok_or(UpdateError::UpdateProviderNotConfigured)?
@@ -291,24 +298,24 @@ where
     Ok((StatusCode::ACCEPTED, headers))
 }
 
-async fn update_package_prepare<V>(
+async fn update_package_prepare(
     axum::extract::Path(update_package_id): axum::extract::Path<String>,
     parts: Parts,
-    State(state): State<AppState<V>>,
-) -> Result<(StatusCode, HeaderMap)>
-where
-    V: Clone + Send + Sync + 'static,
-{
-    let update = state
-        .updates
+    State(topology): State<Topology>,
+) -> Result<(StatusCode, HeaderMap)> {
+    let updates = topology
+        .read()
+        .await
+        .get_updates()
+        .ok_or(UpdateError::UpdateProviderNotConfigured)?;
+    let update = updates
         .find(&update_package_id)
         .await
         .ok_or_else(|| Error::EntityNotFound(update_package_id.clone()))?;
 
-    let feedback = state.updates.feedback_sender(&update_package_id).await;
+    let feedback = updates.feedback_sender(&update_package_id).await;
 
-    state
-        .updates
+    updates
         .provider()
         .await
         .ok_or(UpdateError::UpdateProviderNotConfigured)?

@@ -24,7 +24,7 @@ use opensovd_mocks::InMemoryBulkDataProvider;
 use opensovd_models::updates::{
     Phase as ModelPhase, Status as ModelStatus, UpdateDetail, UpdateStatus,
 };
-use opensovd_server::{Server, Topology, Updates};
+use opensovd_server::{Server, Topology};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -371,16 +371,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut guard = topology.write().await;
         guard.add_component(component);
         guard.add_app(app);
+        guard.add_update_provider::<Update, UpdateDetail, Feedback, UpdateStatus>(Provider {
+            store,
+        });
     }
-
-    let updates = Updates::new::<Update, UpdateDetail, Feedback, UpdateStatus>(Provider { store });
 
     let listener = TcpListener::bind("127.0.0.1:7690").await?;
     let server = Server::builder()
         .base_uri("http://127.0.0.1:7690/sovd")?
         .listener(listener)
         .topology(topology)
-        .updates(updates)
         .layer(opensovd_extra::trace::server_layer())
         .build()?;
 

@@ -51,7 +51,7 @@ use axum::{
     http::{Uri, request::Parts},
 };
 use http::header::HOST;
-use opensovd_core::{Topology, Updates};
+use opensovd_core::Topology;
 pub use opensovd_models::version::{VendorInfo, VersionInfo};
 use serde::Serialize;
 
@@ -61,7 +61,6 @@ use crate::schema::JsonSchema;
 pub struct AppState<V> {
     pub vendor_info: Option<V>,
     pub topology: Topology,
-    pub updates: Updates,
 }
 
 impl<V> FromRef<AppState<V>> for Topology {
@@ -119,12 +118,7 @@ pub(crate) fn versioned_uri(parts: &Parts) -> String {
     format!("{}/{API_VERSION}", base_uri(parts))
 }
 
-pub fn router<V>(
-    vendor_info: Option<V>,
-    topology: Topology,
-    base_uri: BaseUri,
-    updates: Updates,
-) -> Router
+pub fn router<V>(vendor_info: Option<V>, topology: Topology, base_uri: BaseUri) -> Router
 where
     V: Serialize + Clone + Send + Sync + 'static,
     VersionInfo<V>: JsonSchema,
@@ -132,7 +126,6 @@ where
     let state = AppState {
         vendor_info,
         topology,
-        updates,
     };
 
     let v1_routes = Router::new()
