@@ -126,7 +126,6 @@ pub(super) async fn app_capabilities(
 mod tests {
     use axum::{body::Body, http::Request};
     use http_body_util::BodyExt;
-    use opensovd_core::Updates;
     use opensovd_mocks::create_mock_topology;
     use tower::ServiceExt;
 
@@ -137,7 +136,6 @@ mod tests {
         let state = AppState::<()> {
             vendor_info: None,
             topology: create_mock_topology().await,
-            updates: Updates::default(),
         };
         let app = routes::<()>()
             .with_state(state)
@@ -175,7 +173,6 @@ mod tests {
         let state = AppState::<()> {
             vendor_info: None,
             topology: create_mock_topology().await,
-            updates: Updates::default(),
         };
         let app = routes::<()>()
             .with_state(state)
@@ -203,7 +200,6 @@ mod tests {
         let state = AppState::<()> {
             vendor_info: None,
             topology,
-            updates: Updates::default(),
         };
         let app = routes::<()>()
             .with_state(state)
@@ -226,7 +222,6 @@ mod tests {
         let state = AppState::<()> {
             vendor_info: None,
             topology: create_mock_topology().await,
-            updates: Updates::default(),
         };
         let app = routes::<()>()
             .with_state(state)

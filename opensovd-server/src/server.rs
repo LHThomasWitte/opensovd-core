@@ -104,7 +104,6 @@ fn build_router<Vendor, Layer>(
     vendor_info: Option<Vendor>,
     auth: Option<Auth>,
     topology: Topology,
-    updates: Updates,
     layer: Layer,
     services: Vec<(String, Service)>,
 ) -> Router
@@ -119,7 +118,7 @@ where
         Into<std::convert::Infallible> + 'static,
     <Layer::Service as TowerService<http::Request<axum::body::Body>>>::Future: Send + 'static,
 {
-    let inner = crate::routes::router(vendor_info, topology, advertised, updates);
+    let inner = crate::routes::router(vendor_info, topology, advertised);
     let mut router = match base {
         Some(path) => Router::new().nest(path, inner),
         None => Router::new().merge(inner),
@@ -148,7 +147,6 @@ pub struct ServerBuilder<Vendor = VendorInfo, Layer = Identity> {
     vendor_info: Option<Vendor>,
     auth: Option<Auth>,
     topology: Topology,
-    updates: Updates,
     layer: Layer,
     services: Vec<(String, Service)>,
     #[cfg(feature = "tls")]
@@ -162,7 +160,6 @@ pub struct Server<Vendor = VendorInfo, Layer = Identity> {
     vendor_info: Option<Vendor>,
     auth: Option<Auth>,
     topology: Topology,
-    updates: Updates,
     layer: Layer,
     services: Vec<(String, Service)>,
     #[cfg(feature = "tls")]
@@ -204,7 +201,6 @@ impl ServerBuilder<VendorInfo, Identity> {
             }),
             auth: None,
             topology: Topology::default(),
-            updates: Updates::default(),
             layer: Identity::new(),
             services: Vec::new(),
             #[cfg(feature = "tls")]
@@ -253,7 +249,6 @@ impl<Vendor, Layer> ServerBuilder<Vendor, Layer> {
             vendor_info: Some(vendor_info),
             auth: self.auth,
             topology: self.topology,
-            updates: self.updates,
             layer: self.layer,
             services: self.services,
             #[cfg(feature = "tls")]
@@ -278,7 +273,6 @@ impl<Vendor, Layer> ServerBuilder<Vendor, Layer> {
             vendor_info: self.vendor_info,
             auth: self.auth,
             topology: self.topology,
-            updates: self.updates,
             layer: Stack::new(layer, self.layer),
             services: self.services,
             #[cfg(feature = "tls")]
@@ -288,11 +282,6 @@ impl<Vendor, Layer> ServerBuilder<Vendor, Layer> {
 
     pub fn topology(mut self, topology: Topology) -> Self {
         self.topology = topology;
-        self
-    }
-
-    pub fn updates(mut self, updates: Updates) -> Self {
-        self.updates = updates;
         self
     }
 
@@ -339,7 +328,6 @@ impl<Vendor, Layer> ServerBuilder<Vendor, Layer> {
             vendor_info: self.vendor_info,
             auth: self.auth,
             topology: self.topology,
-            updates: self.updates,
             layer: self.layer,
             services: self.services,
             #[cfg(feature = "tls")]
@@ -397,7 +385,6 @@ where
             self.vendor_info,
             self.auth,
             self.topology,
-            self.updates,
             self.layer,
             self.services,
         );
