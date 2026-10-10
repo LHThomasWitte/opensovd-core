@@ -97,19 +97,19 @@ impl App {
 
     #[must_use]
     pub fn with_update_provider<
-        UpdateModel: UpdateDescriptor + FromModel<UpdateImpl> + 'static,
-        UpdateImpl: 'static,
-        FeedbackModel: ToModel<FeedbackImpl> + 'static,
-        FeedbackImpl: 'static,
+        UpdateImpl: UpdateDescriptor + FromModel<UpdateModel> + 'static,
+        UpdateModel: 'static,
+        FeedbackImpl: ToModel<FeedbackModel> + 'static,
+        FeedbackModel: 'static,
     >(
         mut self,
         provider: impl UpdateProvider,
     ) -> Self {
         self.update_provider = Some(Updates::new::<
-            UpdateModel,
             UpdateImpl,
-            FeedbackModel,
+            UpdateModel,
             FeedbackImpl,
+            FeedbackModel,
         >(provider));
         self
     }
