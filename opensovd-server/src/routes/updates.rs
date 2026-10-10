@@ -16,8 +16,8 @@ use opensovd_core::{Topology, TopologyReadGuard, UpdateError, Updates};
 use opensovd_models::{
     Response,
     updates::{
-        AvailableUpdates, PathParams, Phase, Status, UpdateDetail, UpdateDetailQuery,
-        UpdateOrigins, UpdateStatus,
+        AvailableUpdates, EntityPathParams, PathParams, Phase, Status, UpdateDetail,
+        UpdateDetailQuery, UpdateOrigins, UpdateStatus,
     },
 };
 
@@ -78,41 +78,39 @@ where
 }
 
 async fn list_updates(
-    Path(path_params): Path<Option<(String, String)>>,
+    Path(EntityPathParams {
+        entity_collection,
+        entity_id,
+    }): Path<EntityPathParams>,
     State(topology): State<Topology>,
 ) -> Result<Json<Response<AvailableUpdates>>> {
     let topo = topology.read().await;
     Ok(Json(Response {
         data: AvailableUpdates {
-            items: get_updates(
-                topo,
-                path_params.as_ref().map(|(fst, _)| fst),
-                path_params.as_ref().map(|(_, snd)| snd),
-            )?
-            .available()
-            .await
-            .iter()
-            .map(|u| u.id().clone())
-            .collect(),
+            items: get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?
+                .available()
+                .await
+                .iter()
+                .map(|u| u.id().clone())
+                .collect(),
         },
         schema: None,
     }))
 }
 
 async fn create_updates(
-    Path(path_params): Path<Option<(String, String)>>,
+    Path(EntityPathParams {
+        entity_collection,
+        entity_id,
+    }): Path<EntityPathParams>,
     State(topology): State<Topology>,
     parts: Parts,
     Json(body): Json<UpdateDetail>,
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
-    let id = get_updates(
-        topo,
-        path_params.as_ref().map(|(fst, _)| fst),
-        path_params.as_ref().map(|(_, snd)| snd),
-    )?
-    .push(&body)
-    .await?;
+    let id = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?
+        .push(&body)
+        .await?;
     let versioned_uri = super::versioned_uri(&parts);
 
     let mut headers = HeaderMap::new();

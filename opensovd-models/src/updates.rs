@@ -131,10 +131,20 @@ pub struct UpdateStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct PathParams {
     #[serde(default)]
     pub entity_collection: Option<String>,
     #[serde(default)]
     pub entity_id: Option<String>,
     pub update_package_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct EntityPathParams {
+    #[serde(default)]
+    pub entity_collection: Option<String>,
+    #[serde(default)]
+    pub entity_id: Option<String>,
 }
