@@ -7,7 +7,7 @@ use std::pin::Pin;
 
 use axum::Router;
 use futures::future::{FutureExt, Shared};
-use opensovd_core::{Topology, Updates};
+use opensovd_core::Topology;
 use serde::Serialize;
 use thiserror::Error;
 use tokio::net::TcpListener;

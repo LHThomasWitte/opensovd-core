@@ -358,6 +358,7 @@ impl TopologyWriteGuard<'_> {
         self.pending.push(TopologyEvent::Added(entity_ref));
     }
 
+    /// Adds an update provider to the topology root.
     pub fn add_update_provider<
         UpdateImpl: UpdateDescriptor + FromModel<UpdateModel> + 'static,
         UpdateModel: 'static,
@@ -395,6 +396,7 @@ impl TopologyWriteGuard<'_> {
         }
     }
 
+    /// Removes the update provider from the topology root.
     pub fn remove_update_provider(&mut self) {
         self.state.remove_update_provider();
     }

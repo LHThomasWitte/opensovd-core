@@ -53,6 +53,14 @@ pub struct AvailableUpdates {
     pub items: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+pub struct AvailableUpdatesResponse {
+    pub data: AvailableUpdates,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 #[serde(default, rename_all = "kebab-case")]
@@ -105,6 +113,14 @@ pub struct UpdateDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+pub struct UpdateDetailResponse {
+    pub data: UpdateDetail,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub struct Target {
     pub entity: String,
     pub file: String,
@@ -128,6 +144,14 @@ pub struct UpdateStatus {
     pub step_translation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<GenericError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+pub struct UpdateStatusResponse {
+    pub data: UpdateStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -15,11 +15,11 @@
 use std::sync::Arc;
 
 use futures::StreamExt as _;
-use opensovd_core::ToModel;
 use opensovd_core::{
-    App, BulkDataProvider as _, Component, FromModel, Phase, Status, UpdateDescriptor, UpdateError,
-    UpdateFeedback, UpdateProvider,
+    App, Component, FromModel, Phase, Status, UpdateDescriptor, UpdateError, UpdateFeedback,
+    UpdateProvider,
 };
+use opensovd_core::{BulkDataProvider, ToModel};
 use opensovd_mocks::InMemoryBulkDataProvider;
 use opensovd_models::updates::{
     Phase as ModelPhase, Status as ModelStatus, UpdateDetail, UpdateStatus,
@@ -196,7 +196,7 @@ impl Provider {
     ) -> Result<UpdatePayload, UpdateError> {
         let (category, id) = Self::parse_url(url);
         let mut bulk = store
-            .download(category, id)
+            .bulk_download(category, id)
             .await
             .map_err(|e| UpdateError::ProviderError(e.to_string()))?;
         let mut bytes = Vec::new();

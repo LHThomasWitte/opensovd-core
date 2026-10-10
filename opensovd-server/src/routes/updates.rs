@@ -7,18 +7,16 @@ use axum::{
     Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    response::Json,
+    response::{IntoResponse, Json},
     routing::{get, put},
 };
 use axum_extra::extract::{Query, WithRejection};
 use http::{HeaderValue, request::Parts};
 use opensovd_core::{Topology, TopologyReadGuard, UpdateError, Updates};
-use opensovd_models::{
-    Response,
-    updates::{
-        AvailableUpdates, EntityPathParams, PathParams, Phase, Status, UpdateDetail,
-        UpdateDetailQuery, UpdateOrigins, UpdateStatus,
-    },
+use opensovd_models::updates::{
+    AvailableUpdates, AvailableUpdatesResponse, EntityPathParams, PathParams, Phase, Status,
+    UpdateDetail, UpdateDetailQuery, UpdateDetailResponse, UpdateOrigins, UpdateStatus,
+    UpdateStatusResponse,
 };
 
 use super::error::Result;
@@ -83,9 +81,9 @@ async fn list_updates(
         entity_id,
     }): Path<EntityPathParams>,
     State(topology): State<Topology>,
-) -> Result<Json<Response<AvailableUpdates>>> {
+) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
-    Ok(Json(Response {
+    Ok(Json(AvailableUpdatesResponse {
         data: AvailableUpdates {
             items: get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?
                 .available()
@@ -132,7 +130,7 @@ async fn get_update_package(
     }): Path<PathParams>,
     State(topology): State<Topology>,
     WithRejection(Query(query), _): WithRejection<Query<UpdateDetailQuery>, Error>,
-) -> Result<Json<Response<UpdateDetail>>> {
+) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
     get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?
         .find(&update_package_id)
@@ -140,7 +138,7 @@ async fn get_update_package(
         .map_or_else(
             || Err(Error::EntityNotFound(update_package_id)),
             |update| {
-                Ok(Json(Response {
+                Ok(Json(UpdateDetailResponse {
                     data: UpdateDetail {
                         id: Some(update.id()),
                         update_name: update.update_name(),
@@ -208,14 +206,14 @@ async fn update_package_status(
         update_package_id,
     }): Path<PathParams>,
     State(topology): State<Topology>,
-) -> Result<Json<Response<UpdateStatus>>> {
+) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
     let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
     updates
         .feedback(&update_package_id)
         .await
         .map(|feedback: Arc<UpdateStatus>| {
-            Json(Response {
+            Json(UpdateStatusResponse {
                 data: feedback.deref().clone(),
                 schema: Some(UpdateStatus::schema()),
             })
@@ -379,18 +377,18 @@ fn get_updates(
                 .map_err(|_| Error::EntityNotFound(entity_id.clone()))?;
             component
                 .updates()
-                .ok_or_else(|| Error::ProviderNotAvailable("updates".into()))
+                .ok_or_else(|| Error::ResourceNotFound("updates".into()))
         }
         (Some(s), Some(entity_id)) if s == "apps" => {
             let app = topo
                 .get_app(entity_id)
                 .map_err(|_| Error::EntityNotFound(entity_id.clone()))?;
             app.updates()
-                .ok_or_else(|| Error::ProviderNotAvailable("updates".into()))
+                .ok_or_else(|| Error::ResourceNotFound("updates".into()))
         }
         (None, None) => topo
             .get_updates()
-            .ok_or_else(|| Error::ProviderNotAvailable("updates".into())),
+            .ok_or_else(|| Error::ResourceNotFound("updates".into())),
         _ => Err(Error::EntityNotFound(format!(
             "entity_collection: {entity_collection:?}, entity_id: {entity_id:?}",
         ))),
