@@ -181,7 +181,7 @@ impl Provider {
             }
             let _ = feedback.send(Some(Arc::new(Feedback {
                 phase: phase.clone(),
-                status: Status::InProgress,
+                status: Status::Completed,
                 progress: Some(100),
                 step: None,
             })));
