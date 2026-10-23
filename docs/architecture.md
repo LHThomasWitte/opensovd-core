@@ -51,9 +51,11 @@ classDiagram
 
     class EntityKind {
         <<enumeration>>
+        Area
         Component
         App
-        Area
+        Function
+        Server
     }
 
     class EntityRef {
@@ -167,9 +169,11 @@ A write guard over the topology state. Holds a `RwLockWriteGuard` for its lifeti
 
 **Crate:** `opensovd-core`
 
-### EntityRef / EntityKind
+### EntityRef / EntityKind / EntityPath
 
-`EntityKind` is an enum with variants `Component`, `App`, and `Area`. `EntityRef` is a lightweight reference containing a `kind` and `id`. Factory methods `EntityRef::component()`, `EntityRef::app()`, and `EntityRef::area()` create refs. All entity structs hold an `EntityRef` and expose it via `entity_ref()`.
+`EntityKind` is an enum with variants `Area`, `Component`, `App`, `Function`, and `Server`. `EntityRef` is a lightweight reference containing a `kind` and `id`. Factory methods `EntityRef::component()`, `EntityRef::app()`, and `EntityRef::area()` create refs. All entity structs hold an `EntityRef` and expose it via `entity_ref()`.
+
+`EntityPath` names an entity by its kind and its ids from the top level down, such as `components/Cabin/subcomponents/Display`. `segments()` yields the collection and the id of each level, and the server percent-encodes the ids. `EntityPath::area()`, `component()`, `app()`, `function()` and `server()` build one, `child()` nests an area or a component one level, and an empty, `.` or `..` id is rejected. The server builds one for the entity a route addresses.
 
 **Crate:** `opensovd-core`
 
@@ -247,7 +251,7 @@ sequenceDiagram
         Top-->>R: TopologyReadGuard
         R->>R: Query guard (get_component, get_app, get_area, ...)
         R->>R: Build capabilities response
-    else Data Routes (/v1/{entity}/{id}/data/...)
+    else Data Routes (/v1/{entity_path}/data/...)
         R->>Top: topology.read()
         Top-->>R: TopologyReadGuard
         R->>R: Get entity via guard
@@ -272,11 +276,22 @@ If the request is allowed, the principal is stored in the request extensions and
 
 ### Entity Routes
 
-`GET /{entity-collection}` (e.g., `/components`, `/apps`, `/areas`) acquires a read lock via `topology.read()` → `TopologyReadGuard`, iterates/filters the matching entities, and returns a JSON array of `EntityReference` objects. `GET /{entity-collection}/{id}` looks up a single entity and returns its capabilities, including relationship hrefs and data provider availability. Returns **404** if the entity is not found.
+`GET /{entity_collection}` (e.g., `/components`, `/apps`, `/areas`) acquires a read lock via `topology.read()` → `TopologyReadGuard`, iterates/filters the matching entities, and returns a JSON array of `EntityReference` objects. `GET /{entity_collection}/{id}` looks up a single entity and returns its capabilities, including relationship hrefs and data provider availability. Returns **404** if the entity is not found.
+
+The route table in `routes/mod.rs` has one router per entity kind. It says what the kind serves, relative to the entity: the area, component, app and function listings on the server, resource collections on the server, components and apps, `contains` on areas, `hosts` on components, the sub-entity listings on top-level areas and components, and `depends-on` on the server, components, apps and functions.
+`versioned()` mounts each router at every level it is served on, such as `/components/{component_id}` and `/components/{component_id}/subcomponents/{subcomponent_id}`; subareas and subcomponents list no sub-entities, as entities nest one level only. Handlers take the entity from the `Entity` extractor, which reads it from the route's entity params, so one handler serves every level. Routes that are not served yet, which include every route of a subarea or subcomponent, answer **404** `resource-not-found` for an existing entity and **404** `entity-not-found` for a missing one; for a subarea or subcomponent only its parent is checked. A method the route does not serve answers **405** with the `method-not-allowed` vendor code and an `Allow` header. Any other path answers **404** `resource-not-found`. A path param that is not UTF-8 answers **400** `incomplete-request`, and an empty, `.` or `..` entity id **404** `resource-not-found`.
+
+A request is checked in this order:
+
+- the route first: an unknown path answers **404** `resource-not-found`, a method the route does not serve **405** `method-not-allowed`;
+- then the request's form: path params, query, headers and body (**400**, **415**);
+- then the entity (**404** `entity-not-found`);
+- then the resource (**404** `resource-not-found`);
+- then the operation.
 
 ### Data Routes
 
-`GET /{entity}/{id}/data/{data_id}` acquires a read lock, fetches the entity from the `TopologyReadGuard`, extracts its `DataProvider`, and calls `data_read()`. `PUT` follows the same lookup but calls `data_write()` instead. Returns **404** if the entity or data item is not found, **405** with `Allow: GET` if a write is attempted on a read-only item, **405** with `Allow: PUT` if a read is attempted on a write-only item, **400** with a `DataError` body if the request body is malformed or the value does not fit the item, and **204 No Content** on a successful write.
+`GET /{entity_path}/data/{data_id}` acquires a read lock, takes the entity from the route, fetches it from the `TopologyReadGuard`, extracts its `DataProvider`, and calls `data_read()`. `PUT` follows the same lookup but calls `data_write()` instead. Returns **404** if the entity, its data provider or the data item is not found, **405** with `Allow: GET` if a write is attempted on a read-only item, **405** with `Allow: PUT` if a read is attempted on a write-only item, **400** with a `DataError` body if the request body is malformed or the value does not fit the item, and **204 No Content** on a successful write.
 
 ### Version Route
 

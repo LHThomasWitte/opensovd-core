@@ -4,21 +4,28 @@
 // AI Disclosure: This file was created with the assistance of OpenAI Codex.
 // Assisted-by: OpenAI Codex
 
-//! SOVD logging resource endpoints.
+//! Log resource endpoints.
+//!
+//! Provides routes below the path of an entity, `{entity_path}`, which is
+//! empty for the server:
+//! - GET /{entity_path}/logs - Retrieve log resources
+//! - GET /{entity_path}/logs/entries - Read log entries
+//! - GET /{entity_path}/logs/x-opensovd-log-streams - Stream log entries
+//! - GET /{entity_path}/logs/config - Retrieve the log configuration
+//! - PUT /{entity_path}/logs/config - Configure the log
+//! - DELETE /{entity_path}/logs/config - Reset the log configuration to default
 
 use axum::{
-    Json, Router,
-    extract::{Path, State},
+    Router,
+    extract::State,
     response::sse::{Event, KeepAlive, Sse},
     routing::get,
 };
-use axum_extra::extract::{Query, WithRejection};
 use futures::StreamExt;
 use http::{StatusCode, request::Parts};
 use opensovd_core::{
     LogConfiguration as CoreLogConfiguration, LogContext as CoreLogContext,
-    LogEntry as CoreLogEntry, LogError, LogFilter, LogProvider, LogSeverity as CoreLogSeverity,
-    Topology,
+    LogEntry as CoreLogEntry, LogError, LogFilter, LogSeverity as CoreLogSeverity, Topology,
 };
 use opensovd_models::{
     error::{ErrorCode, GenericError},
@@ -30,79 +37,65 @@ use opensovd_models::{
 };
 
 use super::{
-    AppState,
-    entities::encode_path_segment,
-    error::{Error, Result},
+    discovery::encode_path,
+    entity::Entity,
+    error::Result,
+    extract::{Json, Query},
     versioned_uri,
 };
 use crate::schema::JsonSchema;
 
-pub fn routes<V>() -> Router<AppState<V>>
-where
-    V: Clone + Send + Sync + 'static,
-{
+pub fn routes() -> Router<Topology> {
     Router::new()
-        .route("/{entity_collection}/{entity_id}/logs", get(log_resources))
+        .route("/logs", get(log_resources))
+        .route("/logs/entries", get(log_entries))
+        .route("/logs/x-opensovd-log-streams", get(log_entry_stream))
         .route(
-            "/{entity_collection}/{entity_id}/logs/entries",
-            get(log_entries),
-        )
-        .route(
-            "/{entity_collection}/{entity_id}/logs/x-opensovd-log-streams",
-            get(log_entry_stream),
-        )
-        .route(
-            "/{entity_collection}/{entity_id}/logs/config",
+            "/logs/config",
             get(log_configuration)
-                .put(update_log_configuration)
-                .delete(reset_log_configuration),
+                .put(log_configuration_write)
+                .delete(log_configuration_reset),
         )
 }
 
+/// GET /{entity_path}/logs - Retrieve log resources.
+///
+/// Returns the links to the entries and the configuration of an entity, and
+/// to the live stream if the provider supports it.
 async fn log_resources(
     State(topology): State<Topology>,
-    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
-        Path<(String, String)>,
-        Error,
-    >,
-    WithRejection(Query(query), _): WithRejection<Query<LogResourcesQuery>, Error>,
+    entity: Entity,
     parts: Parts,
+    Query(query): Query<LogResourcesQuery>,
 ) -> Result<Json<LogResources>> {
-    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
-    let base = versioned_uri(&parts);
-    let stream = provider.supports_streaming().then(|| {
-        format!(
-            "{base}/{entity_collection}/{}/logs/x-opensovd-log-streams",
-            encode_path_segment(&entity_id)
-        )
-        .into()
-    });
+    let provider = entity.log_provider(&topology.read().await)?;
+    let logs = format!(
+        "{}/{}/logs",
+        versioned_uri(&parts),
+        encode_path(entity.path())
+    );
+    let stream = provider
+        .supports_streaming()
+        .then(|| format!("{logs}/x-opensovd-log-streams").into());
     Ok(Json(LogResources {
-        entries: format!(
-            "{base}/{entity_collection}/{}/logs/entries",
-            encode_path_segment(&entity_id)
-        )
-        .into(),
-        config: format!(
-            "{base}/{entity_collection}/{}/logs/config",
-            encode_path_segment(&entity_id)
-        )
-        .into(),
+        entries: format!("{logs}/entries").into(),
+        config: format!("{logs}/config").into(),
         stream,
         schema: query.include_schema.then(LogResources::schema),
     }))
 }
 
+/// GET /{entity_path}/logs/entries - Read log entries.
+///
+/// Returns the log entries of an entity, optionally filtered by severity or
+/// creation time.
 async fn log_entries(
     State(topology): State<Topology>,
-    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
-        Path<(String, String)>,
-        Error,
-    >,
-    WithRejection(Query(query), _): WithRejection<Query<LogEntriesQuery>, Error>,
+    entity: Entity,
+    Query(query): Query<LogEntriesQuery>,
 ) -> Result<Json<LogEntries>> {
     validate_entries_filter(&query)?;
-    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    let provider = entity.log_provider(&topology.read().await)?;
     let include_schema = query.include_schema;
     let entries = provider
         .entries(LogFilter {
@@ -121,18 +114,18 @@ async fn log_entries(
     }))
 }
 
+/// GET /{entity_path}/logs/x-opensovd-log-streams - Stream log entries.
+///
+/// Sends the log entries as server-sent events, filtered like the entries.
 async fn log_entry_stream(
     State(topology): State<Topology>,
-    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
-        Path<(String, String)>,
-        Error,
-    >,
-    WithRejection(Query(query), _): WithRejection<Query<LogStreamQuery>, Error>,
+    entity: Entity,
+    Query(query): Query<LogStreamQuery>,
 ) -> Result<
     Sse<impl futures_core::Stream<Item = std::result::Result<Event, std::convert::Infallible>>>,
 > {
     validate_stream_filter(&query)?;
-    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    let provider = entity.log_provider(&topology.read().await)?;
     let stream = provider
         .stream(LogFilter {
             severity: query.severity.map(core_severity),
@@ -188,15 +181,15 @@ fn stream_error(error: &LogError) -> GenericError {
     GenericError::new(error_code, message)
 }
 
+/// GET /{entity_path}/logs/config - Retrieve the log configuration.
+///
+/// Returns the severity configured for each log context of an entity.
 async fn log_configuration(
     State(topology): State<Topology>,
-    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
-        Path<(String, String)>,
-        Error,
-    >,
-    WithRejection(Query(query), _): WithRejection<Query<LogConfigurationQuery>, Error>,
+    entity: Entity,
+    Query(query): Query<LogConfigurationQuery>,
 ) -> Result<Json<LogConfigurationResponse>> {
-    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    let provider = entity.log_provider(&topology.read().await)?;
     let contexts = provider
         .configuration()
         .await?
@@ -209,51 +202,31 @@ async fn log_configuration(
     }))
 }
 
-async fn update_log_configuration(
+/// PUT /{entity_path}/logs/config - Configure the log.
+///
+/// Sets the severity of the given log contexts.
+async fn log_configuration_write(
     State(topology): State<Topology>,
-    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
-        Path<(String, String)>,
-        Error,
-    >,
-    WithRejection(Json(body), _): WithRejection<Json<LogConfigurationRequest>, Error>,
+    entity: Entity,
+    Json(body): Json<LogConfigurationRequest>,
 ) -> Result<StatusCode> {
-    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    let provider = entity.log_provider(&topology.read().await)?;
     provider
         .configure(body.items.into_iter().map(core_configuration).collect())
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn reset_log_configuration(
+/// DELETE /{entity_path}/logs/config - Reset the log configuration to default.
+///
+/// Restores the default configuration of the provider.
+async fn log_configuration_reset(
     State(topology): State<Topology>,
-    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
-        Path<(String, String)>,
-        Error,
-    >,
+    entity: Entity,
 ) -> Result<StatusCode> {
-    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    let provider = entity.log_provider(&topology.read().await)?;
     provider.reset_configuration().await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-async fn get_provider(
-    topology: &Topology,
-    entity_collection: &str,
-    entity_id: &str,
-) -> Result<std::sync::Arc<dyn LogProvider>> {
-    let topo = topology.read().await;
-    let provider = match entity_collection {
-        "apps" => topo
-            .get_app(entity_id)
-            .map_err(|_| Error::EntityNotFound(entity_id.to_string()))?
-            .log_provider(),
-        "components" => topo
-            .get_component(entity_id)
-            .map_err(|_| Error::EntityNotFound(entity_id.to_string()))?
-            .log_provider(),
-        _ => return Err(Error::EntityNotFound(entity_collection.to_string())),
-    };
-    provider.ok_or_else(|| LogError::NotSupported("logs resource is not supported".into()).into())
 }
 
 fn core_severity(value: LogSeverity) -> CoreLogSeverity {

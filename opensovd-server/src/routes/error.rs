@@ -9,11 +9,13 @@ use axum::{
     extract::path::ErrorKind,
     extract::rejection::{JsonRejection, PathRejection},
     http::{StatusCode, header},
-    response::{IntoResponse, Json, Response},
+    response::{IntoResponse, Response},
 };
 use axum_extra::{extract::QueryRejection, typed_header::TypedHeaderRejection};
-use opensovd_core::{BulkDataError, DataError, LogError, TopologyError};
+use opensovd_core::{BulkDataError, DataError, LogError};
 use opensovd_models::{ErrorCode, ErrorDetails, GenericError, JsonPointer};
+
+use super::extract::Json;
 
 /// A `Result` alias where the `Err` variant is [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
@@ -21,10 +23,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Handler error that converts to HTTP responses.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The path of the entity, such as `components/ecu`.
     #[error("entity not found: {0}")]
     EntityNotFound(String),
+    /// The request path below the API version, such as
+    /// `components/ecu/unknown`.
     #[error("resource not found: {0}")]
     ResourceNotFound(String),
+    /// The request path below the API version of a route that does not serve
+    /// the method.
+    #[error("method not allowed: {0}")]
+    MethodNotAllowed(String),
     #[error(transparent)]
     Data(#[from] DataError),
     #[error(transparent)]
@@ -39,8 +48,6 @@ pub enum Error {
     InvalidHeader(#[from] TypedHeaderRejection),
     #[error("{0}")]
     BadBody(#[from] JsonRejection),
-    #[error(transparent)]
-    Topology(#[from] TopologyError),
 }
 
 /// A `DataError` naming the erroneous element of the request body.
@@ -82,6 +89,14 @@ fn body_rejection(rejection: &JsonRejection) -> (StatusCode, ErrorDetails) {
     }
 }
 
+/// A `vendor-specific` error with `vendor_code`.
+fn vendor(status: StatusCode, vendor_code: &str, message: String) -> (StatusCode, ErrorDetails) {
+    (
+        status,
+        GenericError::with_vendor_code(vendor_code, message).into(),
+    )
+}
+
 /// The message for a path that does not parse, naming a param that is not
 /// UTF-8.
 fn bad_path(rejection: &PathRejection) -> String {
@@ -121,21 +136,20 @@ pub(super) fn bulk_data_error(e: &BulkDataError) -> (StatusCode, GenericError) {
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, details): (_, ErrorDetails) = match &self {
-            Self::EntityNotFound(id) => (
+            Self::EntityNotFound(id) => vendor(
                 StatusCode::NOT_FOUND,
-                GenericError::with_vendor_code(
-                    "entity-not-found",
-                    format!("Entity not found: {id}"),
-                )
-                .into(),
+                "entity-not-found",
+                format!("Entity not found: {id}"),
             ),
-            Self::ResourceNotFound(resource) => (
+            Self::ResourceNotFound(resource) => vendor(
                 StatusCode::NOT_FOUND,
-                GenericError::with_vendor_code(
-                    "resource-not-found",
-                    format!("Resource not found: {resource}"),
-                )
-                .into(),
+                "resource-not-found",
+                format!("Resource not found: {resource}"),
+            ),
+            Self::MethodNotAllowed(resource) => vendor(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "method-not-allowed",
+                format!("Method not allowed: {resource}"),
             ),
             Self::Data(e) => match e {
                 DataError::NotFound(_) => provider_error(
@@ -191,16 +205,6 @@ impl IntoResponse for Error {
                 GenericError::new(ErrorCode::IncompleteRequest, "Bad request headers").into(),
             ),
             Self::BadBody(rejection) => body_rejection(rejection),
-            Self::Topology(e) => {
-                let status = match e {
-                    TopologyError::NotFound(_) => StatusCode::NOT_FOUND,
-                };
-                tracing::debug!(target: "srv", error = %e, "Topology error");
-                (
-                    status,
-                    GenericError::with_vendor_code("entity-not-found", e.to_string()).into(),
-                )
-            }
         };
         (status, Json(details)).into_response()
     }
@@ -245,7 +249,6 @@ fn provider_error(
 #[cfg(test)]
 mod tests {
     use http_body_util::BodyExt;
-    use opensovd_core::EntityRef;
 
     use super::*;
 
@@ -256,7 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_entity_not_found() {
-        let error = Error::EntityNotFound("test-component".into());
+        let error = Error::EntityNotFound("components/test-component".into());
         let response = error.into_response();
 
         assert_eq!(response.status(), 404);
@@ -264,12 +267,15 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["vendor_code"], "entity-not-found");
-        assert!(json["message"].as_str().unwrap().contains("test-component"));
+        assert_eq!(
+            json["message"],
+            "Entity not found: components/test-component"
+        );
     }
 
     #[tokio::test]
     async fn test_error_resource_not_found() {
-        let error = Error::ResourceNotFound("/v1/unknown".into());
+        let error = Error::ResourceNotFound("components/ecu/unknown".into());
         let response = error.into_response();
 
         assert_eq!(response.status(), 404);
@@ -277,7 +283,10 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["vendor_code"], "resource-not-found");
-        assert!(json["message"].as_str().unwrap().contains("/v1/unknown"));
+        assert_eq!(
+            json["message"],
+            "Resource not found: components/ecu/unknown"
+        );
     }
 
     #[tokio::test]
@@ -416,24 +425,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_error_topology_not_found() {
-        let error = Error::Topology(TopologyError::NotFound(EntityRef::area("area-1")));
-        let response = error.into_response();
-
-        assert_eq!(response.status(), 404);
-
-        let json = json_body(response).await;
-        assert_eq!(json["error_code"], "vendor-specific");
-        assert_eq!(json["vendor_code"], "entity-not-found");
-        assert!(json["message"].as_str().unwrap().contains("area-1"));
-    }
-
-    #[tokio::test]
     async fn test_error_bad_query() {
         use axum::{Router, body::Body, http::Request, routing::get};
-        use axum_extra::extract::{Query, WithRejection};
         use serde::Deserialize;
         use tower::ServiceExt;
+
+        use crate::routes::extract::Query;
 
         #[derive(Deserialize)]
         struct TestQuery {
@@ -441,9 +438,7 @@ mod tests {
             flag: bool,
         }
 
-        async fn handler(
-            WithRejection(Query(_q), _): WithRejection<Query<TestQuery>, Error>,
-        ) -> &'static str {
+        async fn handler(Query(_q): Query<TestQuery>) -> &'static str {
             "ok"
         }
 
@@ -469,13 +464,10 @@ mod tests {
         body: &'static str,
     ) -> (StatusCode, serde_json::Value) {
         use axum::{Router, body::Body, http::Request, routing::put};
-        use axum_extra::extract::WithRejection;
         use opensovd_models::data::WriteRequest;
         use tower::ServiceExt;
 
-        async fn handler(
-            WithRejection(Json(_body), _): WithRejection<Json<WriteRequest>, Error>,
-        ) -> StatusCode {
+        async fn handler(Json(_body): Json<WriteRequest>) -> StatusCode {
             StatusCode::NO_CONTENT
         }
 
