@@ -5,12 +5,11 @@ use std::{ops::Deref, sync::Arc};
 
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Json},
+    response::IntoResponse,
     routing::{get, put},
 };
-use axum_extra::extract::{Query, WithRejection};
 use http::{HeaderValue, request::Parts};
 use opensovd_core::{Topology, TopologyReadGuard, UpdateError, Updates};
 use opensovd_models::updates::{
@@ -20,13 +19,13 @@ use opensovd_models::updates::{
 };
 
 use super::error::Result;
-use crate::routes::{AppState, error::Error};
+use crate::routes::{
+    error::Error,
+    extract::{Json, Path, Query},
+};
 use crate::schema::JsonSchema;
 
-pub fn routes<V>() -> Router<AppState<V>>
-where
-    V: Clone + Send + Sync + 'static,
-{
+pub fn routes() -> Router<Topology> {
     Router::new()
         .route("/updates", get(list_updates).post(create_updates))
         .route(
@@ -114,7 +113,7 @@ async fn create_updates(
     let mut headers = HeaderMap::new();
     let location = HeaderValue::from_str(&format!(
         "{versioned_uri}/updates/{}",
-        super::entities::encode_path_segment(&id)
+        super::discovery::encode_path_segment(&id)
     ))
     .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
     headers.insert("Location", location);
@@ -129,7 +128,7 @@ async fn get_update_package(
         update_package_id,
     }): Path<PathParams>,
     State(topology): State<Topology>,
-    WithRejection(Query(query), _): WithRejection<Query<UpdateDetailQuery>, Error>,
+    Query(query): Query<UpdateDetailQuery>,
 ) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
     get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?

@@ -118,12 +118,13 @@ where
         Into<std::convert::Infallible> + 'static,
     <Layer::Service as TowerService<http::Request<axum::body::Body>>>::Future: Send + 'static,
 {
-    let inner = crate::routes::router(vendor_info, topology, advertised);
+    let inner = crate::routes::router(vendor_info, topology);
     let mut router = match base {
         Some(path) => Router::new().nest(path, inner),
         None => Router::new().merge(inner),
     }
-    .fallback(crate::routes::not_found);
+    .fallback(crate::routes::not_found)
+    .layer(axum::Extension(advertised));
 
     for (path, svc) in services {
         router = router.nest_service(&path, svc);
@@ -285,7 +286,10 @@ impl<Vendor, Layer> ServerBuilder<Vendor, Layer> {
         self
     }
 
-    /// Register a tower service at the given path.
+    /// Register a tower service at the given absolute path. A service at a
+    /// path the API routes, such as `{base}/v1/components`, makes
+    /// [`Server::serve`] panic. A service below an entity, such as
+    /// `{base}/v1/components/ecu/docs`, answers that path instead of the API.
     pub fn service<S, ResBody>(mut self, path: &str, svc: S) -> Self
     where
         S: TowerService<
@@ -452,9 +456,10 @@ mod tests {
     fn test_normalize_base() {
         assert_eq!(normalize_base(""), None);
         assert_eq!(normalize_base("/"), None);
+        assert_eq!(normalize_base("//"), None);
         assert_eq!(normalize_base("/sovd"), Some("/sovd".to_string()));
-        assert_eq!(normalize_base("sovd"), Some("/sovd".to_string()));
         assert_eq!(normalize_base("/sovd/"), Some("/sovd".to_string()));
+        assert_eq!(normalize_base("sovd"), Some("/sovd".to_string()));
         assert_eq!(normalize_base("sovd/"), Some("/sovd".to_string()));
     }
 
