@@ -11,15 +11,15 @@ use axum::{
     routing::{get, put},
 };
 use http::{HeaderValue, request::Parts};
-use opensovd_core::{Topology, TopologyReadGuard, UpdateError, Updates};
+use opensovd_core::{Topology, UpdateError};
 use opensovd_models::updates::{
-    AvailableUpdates, AvailableUpdatesResponse, EntityPathParams, PathParams, Phase, Status,
-    UpdateDetail, UpdateDetailQuery, UpdateDetailResponse, UpdateOrigins, UpdateStatus,
-    UpdateStatusResponse,
+    AvailableUpdates, AvailableUpdatesResponse, Phase, Status, UpdateDetail, UpdateDetailQuery,
+    UpdateDetailResponse, UpdateOrigins, UpdateStatus, UpdateStatusResponse,
 };
 
 use super::error::Result;
 use crate::routes::{
+    entity::Entity,
     error::Error,
     extract::{Json, Path, Query},
 };
@@ -29,15 +29,7 @@ pub fn routes() -> Router<Topology> {
     Router::new()
         .route("/updates", get(list_updates).post(create_updates))
         .route(
-            "/{entity-collection}/{entity-id}/updates",
-            get(list_updates).post(create_updates),
-        )
-        .route(
             "/updates/{update-package-id}",
-            get(get_update_package).delete(delete_update_package),
-        )
-        .route(
-            "/{entity-collection}/{entity-id}/updates/{update-package-id}",
             get(get_update_package).delete(delete_update_package),
         )
         .route(
@@ -45,15 +37,7 @@ pub fn routes() -> Router<Topology> {
             get(update_package_status),
         )
         .route(
-            "/{entity-collection}/{entity-id}/updates/{update-package-id}/status",
-            get(update_package_status),
-        )
-        .route(
             "/updates/{update-package-id}/automated",
-            put(update_package_automated),
-        )
-        .route(
-            "/{entity-collection}/{entity-id}/updates/{update-package-id}/automated",
             put(update_package_automated),
         )
         .route(
@@ -61,30 +45,20 @@ pub fn routes() -> Router<Topology> {
             put(update_package_execute),
         )
         .route(
-            "/{entity-collection}/{entity-id}/updates/{update-package-id}/execute",
-            put(update_package_execute),
-        )
-        .route(
             "/updates/{update-package-id}/prepare",
-            put(update_package_prepare),
-        )
-        .route(
-            "/{entity-collection}/{entity-id}/updates/{update-package-id}/prepare",
             put(update_package_prepare),
         )
 }
 
 async fn list_updates(
-    Path(EntityPathParams {
-        entity_collection,
-        entity_id,
-    }): Path<EntityPathParams>,
     State(topology): State<Topology>,
+    entity: Entity,
 ) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
     Ok(Json(AvailableUpdatesResponse {
         data: AvailableUpdates {
-            items: get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?
+            items: entity
+                .updates_provider(&topo)?
                 .available()
                 .await
                 .iter()
@@ -96,18 +70,13 @@ async fn list_updates(
 }
 
 async fn create_updates(
-    Path(EntityPathParams {
-        entity_collection,
-        entity_id,
-    }): Path<EntityPathParams>,
     State(topology): State<Topology>,
+    entity: Entity,
     parts: Parts,
     Json(body): Json<UpdateDetail>,
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
-    let id = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?
-        .push(&body)
-        .await?;
+    let id = entity.updates_provider(&topo)?.push(&body).await?;
     let versioned_uri = super::versioned_uri(&parts);
 
     let mut headers = HeaderMap::new();
@@ -122,16 +91,14 @@ async fn create_updates(
 }
 
 async fn get_update_package(
-    Path(PathParams {
-        entity_collection,
-        entity_id,
-        update_package_id,
-    }): Path<PathParams>,
     State(topology): State<Topology>,
+    Path(update_package_id): Path<String>,
+    entity: Entity,
     Query(query): Query<UpdateDetailQuery>,
 ) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
-    get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?
+    entity
+        .updates_provider(&topo)?
         .find(&update_package_id)
         .await
         .map_or_else(
@@ -176,15 +143,12 @@ async fn get_update_package(
 }
 
 async fn delete_update_package(
-    Path(PathParams {
-        entity_collection,
-        entity_id,
-        update_package_id,
-    }): Path<PathParams>,
     State(topology): State<Topology>,
+    entity: Entity,
+    Path(update_package_id): Path<String>,
 ) -> Result<StatusCode> {
     let topo = topology.read().await;
-    let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
+    let updates = entity.updates_provider(&topo)?;
     // if the update's status is InProgress, we cannot delete it
     if updates
         .feedback(&update_package_id)
@@ -199,15 +163,12 @@ async fn delete_update_package(
 }
 
 async fn update_package_status(
-    Path(PathParams {
-        entity_collection,
-        entity_id,
-        update_package_id,
-    }): Path<PathParams>,
     State(topology): State<Topology>,
+    entity: Entity,
+    Path(update_package_id): Path<String>,
 ) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
-    let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
+    let updates = entity.updates_provider(&topo)?;
     updates
         .feedback(&update_package_id)
         .await
@@ -221,16 +182,13 @@ async fn update_package_status(
 }
 
 async fn update_package_automated(
-    Path(PathParams {
-        entity_collection,
-        entity_id,
-        update_package_id,
-    }): Path<PathParams>,
     parts: Parts,
     State(topology): State<Topology>,
+    entity: Entity,
+    Path(update_package_id): Path<String>,
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
-    let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
+    let updates = entity.updates_provider(&topo)?;
     if let Some(id) = updates
         .all_feedback::<UpdateStatus>()
         .await
@@ -277,16 +235,13 @@ async fn update_package_automated(
 }
 
 async fn update_package_execute(
-    Path(PathParams {
-        entity_collection,
-        entity_id,
-        update_package_id,
-    }): Path<PathParams>,
     parts: Parts,
     State(topology): State<Topology>,
+    entity: Entity,
+    Path(update_package_id): Path<String>,
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
-    let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
+    let updates = entity.updates_provider(&topo)?;
     if let Some(id) = updates
         .all_feedback::<UpdateStatus>()
         .await
@@ -329,16 +284,13 @@ async fn update_package_execute(
 }
 
 async fn update_package_prepare(
-    Path(PathParams {
-        entity_collection,
-        entity_id,
-        update_package_id,
-    }): Path<PathParams>,
     parts: Parts,
     State(topology): State<Topology>,
+    entity: Entity,
+    Path(update_package_id): Path<String>,
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
-    let updates = get_updates(topo, entity_collection.as_ref(), entity_id.as_ref())?;
+    let updates = entity.updates_provider(&topo)?;
     let update = updates
         .find(&update_package_id)
         .await
@@ -362,36 +314,4 @@ async fn update_package_prepare(
     headers.insert("Location", location);
 
     Ok((StatusCode::ACCEPTED, headers))
-}
-
-fn get_updates(
-    topo: TopologyReadGuard,
-    entity_collection: Option<&String>,
-    entity_id: Option<&String>,
-) -> Result<Updates> {
-    let updates = match (entity_collection, entity_id) {
-        (Some(s), Some(entity_id)) if s == "components" => {
-            let component = topo
-                .get_component(entity_id)
-                .map_err(|_| Error::EntityNotFound(entity_id.clone()))?;
-            component
-                .updates()
-                .ok_or_else(|| Error::ResourceNotFound("updates".into()))
-        }
-        (Some(s), Some(entity_id)) if s == "apps" => {
-            let app = topo
-                .get_app(entity_id)
-                .map_err(|_| Error::EntityNotFound(entity_id.clone()))?;
-            app.updates()
-                .ok_or_else(|| Error::ResourceNotFound("updates".into()))
-        }
-        (None, None) => topo
-            .get_updates()
-            .ok_or_else(|| Error::ResourceNotFound("updates".into())),
-        _ => Err(Error::EntityNotFound(format!(
-            "entity_collection: {entity_collection:?}, entity_id: {entity_id:?}",
-        ))),
-    };
-    drop(topo);
-    updates
 }

@@ -153,22 +153,3 @@ pub struct UpdateStatusResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<serde_json::Value>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct PathParams {
-    #[serde(default)]
-    pub entity_collection: Option<String>,
-    #[serde(default)]
-    pub entity_id: Option<String>,
-    pub update_package_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct EntityPathParams {
-    #[serde(default)]
-    pub entity_collection: Option<String>,
-    #[serde(default)]
-    pub entity_id: Option<String>,
-}
