@@ -22,6 +22,8 @@ pub enum UpdateError {
     UpdateIdConflict(String),
     #[error("Incompatible model")]
     IncompatibleModel,
+    #[error("Update not found: {0}")]
+    UpdateNotFound(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +64,11 @@ struct UpdatesInner {
     provider: Option<Arc<dyn UpdateProvider>>,
     available: Vec<Arc<dyn UpdateDescriptor>>,
     feedback: HashMap<String, (FeedbackSender, FeedbackReceiver)>,
+    // active is used to ensure that only one update is executed at a time.
+    // before an update is executed, it is set to the ID of that update.
+    // check_and_set_active is used to check if the active update is still in
+    // progress, and to set a new active update if none is active.
+    active: Option<String>,
     // model2update stores the method UpdateModel -> UpdateImpl from the
     // UpdateDescriptor trait as a workaround since the actual UpdateImpl type
     // implementing it is erased from Updates.
@@ -90,6 +97,7 @@ impl Updates {
                 provider: Some(Arc::new(provider)),
                 available: Vec::new(),
                 feedback: HashMap::new(),
+                active: None,
                 model2update: Arc::new(|model| {
                     let model = model
                         .downcast_ref::<UpdateModel>()
@@ -145,7 +153,7 @@ impl Updates {
             .cloned()
     }
 
-    pub async fn feedback_sender(
+    async fn feedback_sender(
         &self,
         update_package_id: &str,
     ) -> watch::Sender<Option<Arc<dyn UpdateFeedback>>> {
@@ -185,33 +193,111 @@ impl Updates {
             })
     }
 
-    pub async fn all_feedback<FeedbackModel: Any + Clone>(
-        &self,
-    ) -> Vec<(String, Option<Arc<FeedbackModel>>)> {
-        #[expect(clippy::clone_on_ref_ptr)]
-        let feedback2model = self.inner.read().await.feedback2model.clone();
-        self.inner
-            .read()
-            .await
-            .feedback
-            .iter()
-            .map(|(id, (_tx, rx))| {
-                let model = if let Some(feedback) = &*rx.borrow()
-                    && let Ok(m) = feedback2model(feedback.as_ref())
-                    && let Some(m) = m.downcast_ref::<FeedbackModel>()
-                {
-                    Some(Arc::new(m.clone()))
-                } else {
-                    None
-                };
-                (id.clone(), model)
-            })
-            .collect::<Vec<_>>()
+    #[must_use]
+    async fn provider(&self) -> Option<Arc<dyn UpdateProvider>> {
+        self.inner.read().await.provider.clone()
     }
 
-    #[must_use]
-    pub async fn provider(&self) -> Option<Arc<dyn UpdateProvider>> {
-        self.inner.read().await.provider.clone()
+    /// Executes the update for the given update package ID.
+    ///
+    /// # Errors
+    /// Returns an error if the update cannot be found, if the update provider
+    /// is not configured, or if it conflicts another active update.
+    pub async fn execute(&self, update_package_id: &str) -> Result<(), UpdateError> {
+        let update = self
+            .find(update_package_id)
+            .await
+            .ok_or_else(|| UpdateError::UpdateNotFound(update_package_id.to_string()))?;
+
+        let feedback = self.feedback_sender(update_package_id).await;
+        self.check_and_set_active(update_package_id).await?;
+
+        self.provider()
+            .await
+            .ok_or(UpdateError::UpdateProviderNotConfigured)?
+            .execute(&*update, feedback)?;
+        Ok(())
+    }
+
+    /// Prepares the update for the given update package ID.
+    ///
+    /// # Errors
+    /// Returns an error if the update cannot be found or if the update provider
+    /// is not configured.
+    pub async fn prepare(&self, update_package_id: &str) -> Result<(), UpdateError> {
+        let update = self
+            .find(update_package_id)
+            .await
+            .ok_or_else(|| UpdateError::UpdateNotFound(update_package_id.to_string()))?;
+
+        let feedback = self.feedback_sender(update_package_id).await;
+
+        self.provider()
+            .await
+            .ok_or(UpdateError::UpdateProviderNotConfigured)?
+            .prepare(&*update, feedback)?;
+        Ok(())
+    }
+
+    /// Performs the automated update for the given update package ID.
+    ///
+    /// # Errors
+    /// Returns an error if the update cannot be found, if the update is not
+    /// marked as automated, if the update provider is not configured, or if it
+    /// conflicts another active update.
+    pub async fn automated(&self, update_package_id: &str) -> Result<(), UpdateError> {
+        let update = self
+            .find(update_package_id)
+            .await
+            .ok_or_else(|| UpdateError::UpdateNotFound(update_package_id.to_string()))?;
+
+        if update.automated() != Some(true) {
+            return Err(UpdateError::AutomatedUpdateNotSupported);
+        }
+
+        let feedback = self.feedback_sender(update_package_id).await;
+        self.check_and_set_active(update_package_id).await?;
+
+        self.provider()
+            .await
+            .ok_or(UpdateError::UpdateProviderNotConfigured)?
+            .automated(&*update, feedback)?;
+        Ok(())
+    }
+
+    /// Checks if an update is currently active and sets the given update as active if not.
+    /// If another update is currently active, an `UpdateExecutionInProgress` error is returned.
+    async fn check_and_set_active(&self, update_package_id: &str) -> Result<(), UpdateError> {
+        let inner = self.inner.read().await;
+
+        // if an update is marked as active, retrieve its feedback to check if
+        // it is still in progress.
+        // If the feedback does not exist, it means the update is no longer in progress.
+        if let Some(active) = &inner.active
+            && let Some((_, rx)) = inner.feedback.get(active)
+        {
+            if let Some(feedback) = rx.borrow().as_ref()
+                && feedback.status() == Status::Completed
+            {
+                // if the feedback status is completed, it means the update is
+                // no longer in progress, so we can continue and set a new
+                // active update.
+            } else {
+                return Err(UpdateError::UpdateExecutionInProgress(active.clone()));
+            }
+        }
+
+        // no update is active, so we can set the current one as active
+        drop(inner);
+        let mut inner = self.inner.write().await;
+        // check again after aquiring the write lock
+        if let Some(active) = &inner.active
+            && active != update_package_id
+        {
+            return Err(UpdateError::UpdateExecutionInProgress(active.clone()));
+        }
+        inner.active = Some(update_package_id.to_string());
+        Ok(())
     }
 }
 
@@ -219,6 +305,7 @@ impl Default for Updates {
     fn default() -> Self {
         Self {
             inner: Arc::new(RwLock::new(UpdatesInner {
+                active: None,
                 model2update: Arc::new(|_model| Err(UpdateError::UpdateProviderNotConfigured)),
                 feedback2model: Arc::new(|_feedback| Err(UpdateError::UpdateProviderNotConfigured)),
                 provider: None,
@@ -227,13 +314,6 @@ impl Default for Updates {
             })),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct ActiveUpdate {
-    pub id: String,
-    pub phase: Phase,
-    pub progress: Option<u8>,
 }
 
 pub trait FromModel<Model> {
@@ -346,7 +426,5 @@ pub trait UpdateProvider: Send + Sync + 'static {
         &self,
         _update: &dyn UpdateDescriptor,
         _feedback: watch::Sender<Option<Arc<dyn UpdateFeedback>>>,
-    ) -> Result<(), UpdateError> {
-        Err(UpdateError::AutomatedUpdateNotSupported)
-    }
+    ) -> Result<(), UpdateError>;
 }

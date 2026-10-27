@@ -169,9 +169,13 @@ fn update_error(e: &UpdateError) -> (StatusCode, ErrorDetails) {
             StatusCode::INTERNAL_SERVER_ERROR,
             GenericError::new(ErrorCode::ErrorResponse, msg).into(),
         ),
-        UpdateError::UpdateIdConflict(_id) => (
-            StatusCode::CONFLICT,
-            GenericError::new(ErrorCode::VendorSpecific, e.to_string()).into(),
+        UpdateError::UpdateIdConflict(_id) => {
+            vendor(StatusCode::CONFLICT, "update-id-exists", e.to_string())
+        }
+        UpdateError::UpdateNotFound(id) => vendor(
+            StatusCode::NOT_FOUND,
+            "entity-not-found",
+            format!("Entity not found: {id}"),
         ),
     }
 }

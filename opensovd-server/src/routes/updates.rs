@@ -13,7 +13,7 @@ use axum::{
 use http::{HeaderValue, request::Parts};
 use opensovd_core::{Topology, UpdateError};
 use opensovd_models::updates::{
-    AvailableUpdates, AvailableUpdatesResponse, Phase, Status, UpdateDetail, UpdateDetailQuery,
+    AvailableUpdates, AvailableUpdatesResponse, Status, UpdateDetail, UpdateDetailQuery,
     UpdateDetailResponse, UpdateOrigins, UpdatePackagePath, UpdateQuery, UpdateStatus,
     UpdateStatusResponse,
 };
@@ -211,38 +211,8 @@ async fn update_package_automated(
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
     let updates = entity.updates_provider(&topo)?;
-    if let Some(id) = updates
-        .all_feedback::<UpdateStatus>()
-        .await
-        .into_iter()
-        .find_map(|(id, feedback)| {
-            feedback
-                .as_ref()
-                .filter(|feedback| {
-                    feedback.phase == Phase::Execute && feedback.status == Status::InProgress
-                })
-                .map(|_| id.clone())
-        })
-    {
-        return Err(UpdateError::UpdateExecutionInProgress(id).into());
-    }
 
-    let update = updates
-        .find(&update_package_id)
-        .await
-        .ok_or_else(|| Error::EntityNotFound(update_package_id.clone()))?;
-
-    if update.automated() != Some(true) {
-        return Err(UpdateError::AutomatedUpdateNotSupported.into());
-    }
-
-    let feedback = updates.feedback_sender(&update_package_id).await;
-
-    updates
-        .provider()
-        .await
-        .ok_or(UpdateError::UpdateProviderNotConfigured)?
-        .automated(&*update, feedback)?;
+    updates.automated(&update_package_id).await?;
 
     let versioned_uri = super::versioned_uri(&parts);
 
@@ -268,34 +238,8 @@ async fn update_package_execute(
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
     let updates = entity.updates_provider(&topo)?;
-    if let Some(id) = updates
-        .all_feedback::<UpdateStatus>()
-        .await
-        .into_iter()
-        .find_map(|(id, feedback)| {
-            feedback
-                .as_ref()
-                .filter(|feedback| {
-                    feedback.phase == Phase::Execute && feedback.status == Status::InProgress
-                })
-                .map(|_| id.clone())
-        })
-    {
-        return Err(UpdateError::UpdateExecutionInProgress(id).into());
-    }
 
-    let update = updates
-        .find(&update_package_id)
-        .await
-        .ok_or_else(|| Error::EntityNotFound(update_package_id.clone()))?;
-
-    let feedback = updates.feedback_sender(&update_package_id).await;
-
-    updates
-        .provider()
-        .await
-        .ok_or(UpdateError::UpdateProviderNotConfigured)?
-        .execute(&*update, feedback)?;
+    updates.execute(&update_package_id).await?;
 
     let versioned_uri = super::versioned_uri(&parts);
 
@@ -321,18 +265,8 @@ async fn update_package_prepare(
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
     let updates = entity.updates_provider(&topo)?;
-    let update = updates
-        .find(&update_package_id)
-        .await
-        .ok_or_else(|| Error::EntityNotFound(update_package_id.clone()))?;
 
-    let feedback = updates.feedback_sender(&update_package_id).await;
-
-    updates
-        .provider()
-        .await
-        .ok_or(UpdateError::UpdateProviderNotConfigured)?
-        .prepare(&*update, feedback)?;
+    updates.prepare(&update_package_id).await?;
 
     let versioned_uri = super::versioned_uri(&parts);
 
