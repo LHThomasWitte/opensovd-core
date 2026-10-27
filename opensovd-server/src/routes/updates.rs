@@ -14,7 +14,8 @@ use http::{HeaderValue, request::Parts};
 use opensovd_core::{Topology, UpdateError};
 use opensovd_models::updates::{
     AvailableUpdates, AvailableUpdatesResponse, Phase, Status, UpdateDetail, UpdateDetailQuery,
-    UpdateDetailResponse, UpdateOrigins, UpdatePackagePath, UpdateStatus, UpdateStatusResponse,
+    UpdateDetailResponse, UpdateOrigins, UpdatePackagePath, UpdateQuery, UpdateStatus,
+    UpdateStatusResponse,
 };
 
 use super::error::Result;
@@ -53,6 +54,7 @@ pub fn routes() -> Router<Topology> {
 async fn list_updates(
     State(topology): State<Topology>,
     entity: Entity,
+    Query(query): Query<UpdateQuery>,
 ) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
     Ok(Json(AvailableUpdatesResponse {
@@ -62,7 +64,23 @@ async fn list_updates(
                 .available()
                 .await
                 .iter()
-                .map(|u| u.id().clone())
+                .filter_map(|u| {
+                    if let Some(target_version) = &query.target_version {
+                        // It is unclear how and against what the target_version
+                        // should be compared from the specification. Match it
+                        // against the update_name field which likely contains
+                        // some version information.
+                        if !u.update_name().contains(target_version) {
+                            return None;
+                        }
+                    }
+                    if let Some(origins) = u.origin()
+                        && !origins.contains(&query.origin.to_string())
+                    {
+                        return None;
+                    }
+                    Some(u.id().clone())
+                })
                 .collect(),
         },
         schema: None,

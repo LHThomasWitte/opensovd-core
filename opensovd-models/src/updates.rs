@@ -5,13 +5,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::GenericError;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub enum UpdateOrigins {
+    #[default]
     #[serde(rename = "remote")]
     Remote,
     #[serde(rename = "proximity")]
     Proximity,
+}
+
+impl std::fmt::Display for UpdateOrigins {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpdateOrigins::Remote => write!(f, "remote"),
+            UpdateOrigins::Proximity => write!(f, "proximity"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -66,6 +76,14 @@ pub struct AvailableUpdatesResponse {
 #[serde(default, rename_all = "kebab-case")]
 pub struct UpdateDetailQuery {
     pub include_schema: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+#[serde(default, rename_all = "kebab-case")]
+pub struct UpdateQuery {
+    pub target_version: Option<String>,
+    pub origin: UpdateOrigins,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

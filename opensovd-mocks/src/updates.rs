@@ -36,14 +36,10 @@ impl UpdateDescriptor for MockUpdate {
     }
 
     fn origin(&self) -> Option<Vec<String>> {
-        self.detail.origin.as_ref().map(|v| {
-            v.iter()
-                .map(|o| match o {
-                    UpdateOrigins::Proximity => "proximity".to_string(),
-                    UpdateOrigins::Remote => "remote".to_string(),
-                })
-                .collect::<Vec<_>>()
-        })
+        self.detail
+            .origin
+            .as_ref()
+            .map(|v| v.iter().map(UpdateOrigins::to_string).collect::<Vec<_>>())
     }
 }
 

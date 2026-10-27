@@ -146,6 +146,96 @@ async fn update_lifecycle(#[case] entity_path: &str) {
 }
 
 #[rstest::rstest]
+#[case("", &["remote-v1", "both-v1", "no-origin-v2"])]
+#[case("origin=remote", &["remote-v1", "both-v1", "no-origin-v2"])]
+#[case("origin=proximity", &["proximity-v1", "both-v1", "no-origin-v2"])]
+#[case("target-version=v1.2", &["both-v1"])]
+#[case("origin=proximity&target-version=beta", &["no-origin-v2"])]
+#[tokio::test]
+async fn update_query(#[case] query_string: &str, #[case] expected_ids: &[&str]) {
+    let server = mock_server().await;
+
+    // Create an update that should only be listed for the "proximity" origin.
+    let response = request(
+        &server.url("/sovd/v1/apps/ota_manager/updates"),
+        http::Method::POST,
+        Some(json!({
+        "id": "proximity-v1",
+        "update_name": "Proximity v1",
+        "size": 0,
+        "targets": [],
+        "origin": ["proximity"]
+        })),
+    )
+    .await
+    .unwrap();
+    assert!(response.status().is_success());
+
+    // Create an update that should only be listed for the "remote" origin.
+    let response = request(
+        &server.url("/sovd/v1/apps/ota_manager/updates"),
+        http::Method::POST,
+        Some(json!({
+        "id": "remote-v1",
+        "update_name": "Remote v1.1",
+        "size": 0,
+        "targets": [],
+        "origin": ["remote"]
+        })),
+    )
+    .await
+    .unwrap();
+    assert!(response.status().is_success());
+
+    // Create an update that should be listed for both origins.
+    let response = request(
+        &server.url("/sovd/v1/apps/ota_manager/updates"),
+        http::Method::POST,
+        Some(json!({
+        "id": "both-v1",
+        "update_name": "Both v1.2a",
+        "size": 0,
+        "targets": [],
+        "origin": ["proximity", "remote"]
+        })),
+    )
+    .await
+    .unwrap();
+    assert!(response.status().is_success());
+
+    // Create an update that omits the origin field.
+    let response = request(
+        &server.url("/sovd/v1/apps/ota_manager/updates"),
+        http::Method::POST,
+        Some(json!({
+        "id": "no-origin-v2",
+        "update_name": "No Origin v2.0beta",
+        "size": 0,
+        "targets": []
+        })),
+    )
+    .await
+    .unwrap();
+    assert!(response.status().is_success());
+
+    // Query updates.
+    let response = request(
+        &server.url(&format!("/sovd/v1/apps/ota_manager/updates?{query_string}")),
+        http::Method::GET,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(response.status().is_success());
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["data"]["items"].as_array().unwrap().as_slice(),
+        expected_ids
+    );
+}
+
+#[rstest::rstest]
 #[case("prepare")]
 #[case("execute")]
 #[tokio::test]
