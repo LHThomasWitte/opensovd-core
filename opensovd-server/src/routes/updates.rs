@@ -14,7 +14,7 @@ use http::{HeaderValue, request::Parts};
 use opensovd_core::{Topology, UpdateError};
 use opensovd_models::updates::{
     AvailableUpdates, AvailableUpdatesResponse, Phase, Status, UpdateDetail, UpdateDetailQuery,
-    UpdateDetailResponse, UpdateOrigins, UpdateStatus, UpdateStatusResponse,
+    UpdateDetailResponse, UpdateOrigins, UpdatePackagePath, UpdateStatus, UpdateStatusResponse,
 };
 
 use super::error::Result;
@@ -81,7 +81,11 @@ async fn create_updates(
 
     let mut headers = HeaderMap::new();
     let location = HeaderValue::from_str(&format!(
-        "{versioned_uri}/updates/{}",
+        "{versioned_uri}{}/updates/{}",
+        entity
+            .path()
+            .segments()
+            .fold(String::new(), |acc, (c, id)| acc + "/" + c + "/" + id),
         super::discovery::encode_path_segment(&id)
     ))
     .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
@@ -92,8 +96,8 @@ async fn create_updates(
 
 async fn get_update_package(
     State(topology): State<Topology>,
-    Path(update_package_id): Path<String>,
     entity: Entity,
+    Path(UpdatePackagePath { update_package_id }): Path<UpdatePackagePath>,
     Query(query): Query<UpdateDetailQuery>,
 ) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
@@ -145,7 +149,7 @@ async fn get_update_package(
 async fn delete_update_package(
     State(topology): State<Topology>,
     entity: Entity,
-    Path(update_package_id): Path<String>,
+    Path(UpdatePackagePath { update_package_id }): Path<UpdatePackagePath>,
 ) -> Result<StatusCode> {
     let topo = topology.read().await;
     let updates = entity.updates_provider(&topo)?;
@@ -165,7 +169,7 @@ async fn delete_update_package(
 async fn update_package_status(
     State(topology): State<Topology>,
     entity: Entity,
-    Path(update_package_id): Path<String>,
+    Path(UpdatePackagePath { update_package_id }): Path<UpdatePackagePath>,
 ) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
     let updates = entity.updates_provider(&topo)?;
@@ -185,7 +189,7 @@ async fn update_package_automated(
     parts: Parts,
     State(topology): State<Topology>,
     entity: Entity,
-    Path(update_package_id): Path<String>,
+    Path(UpdatePackagePath { update_package_id }): Path<UpdatePackagePath>,
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
     let updates = entity.updates_provider(&topo)?;
@@ -226,7 +230,11 @@ async fn update_package_automated(
 
     let mut headers = HeaderMap::new();
     let location = HeaderValue::from_str(&format!(
-        "{versioned_uri}/updates/{update_package_id}/status"
+        "{versioned_uri}{}/updates/{update_package_id}/status",
+        entity
+            .path()
+            .segments()
+            .fold(String::new(), |acc, (c, id)| acc + "/" + c + "/" + id)
     ))
     .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
     headers.insert("Location", location);
@@ -238,7 +246,7 @@ async fn update_package_execute(
     parts: Parts,
     State(topology): State<Topology>,
     entity: Entity,
-    Path(update_package_id): Path<String>,
+    Path(UpdatePackagePath { update_package_id }): Path<UpdatePackagePath>,
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
     let updates = entity.updates_provider(&topo)?;
@@ -275,7 +283,11 @@ async fn update_package_execute(
 
     let mut headers = HeaderMap::new();
     let location = HeaderValue::from_str(&format!(
-        "{versioned_uri}/updates/{update_package_id}/status"
+        "{versioned_uri}{}/updates/{update_package_id}/status",
+        entity
+            .path()
+            .segments()
+            .fold(String::new(), |acc, (c, id)| acc + "/" + c + "/" + id)
     ))
     .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
     headers.insert("Location", location);
@@ -287,7 +299,7 @@ async fn update_package_prepare(
     parts: Parts,
     State(topology): State<Topology>,
     entity: Entity,
-    Path(update_package_id): Path<String>,
+    Path(UpdatePackagePath { update_package_id }): Path<UpdatePackagePath>,
 ) -> Result<(StatusCode, HeaderMap)> {
     let topo = topology.read().await;
     let updates = entity.updates_provider(&topo)?;
@@ -308,7 +320,11 @@ async fn update_package_prepare(
 
     let mut headers = HeaderMap::new();
     let location = HeaderValue::from_str(&format!(
-        "{versioned_uri}/updates/{update_package_id}/status"
+        "{versioned_uri}{}/updates/{update_package_id}/status",
+        entity
+            .path()
+            .segments()
+            .fold(String::new(), |acc, (c, id)| acc + "/" + c + "/" + id)
     ))
     .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
     headers.insert("Location", location);

@@ -232,7 +232,7 @@ pub async fn create_mock_topology() -> Topology {
             InMemoryBulkDataProvider::default().with_permanent_entry("logs", "cannot_delete"),
         )
         .with_update_provider::<MockUpdate, UpdateDetail, MockFeedback, UpdateStatus>(
-            MockUpdateProvider,
+            MockUpdateProvider { failing: false },
         );
     // Note: NO with_area_id() - tests optional belongs-to
 
@@ -252,6 +252,10 @@ pub async fn create_mock_topology() -> Topology {
         t.add_app(ota_manager);
         t.add_area(powertrain);
         t.add_area(network);
+        // also add a second update provider to the server root that always fails
+        t.add_update_provider::<MockUpdate, UpdateDetail, MockFeedback, UpdateStatus>(
+            MockUpdateProvider { failing: true },
+        );
     }
     topology
 }

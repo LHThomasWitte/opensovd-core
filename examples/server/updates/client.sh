@@ -53,6 +53,10 @@ echo "=== available updates ==="
 call GET "${BASE}/updates"
 
 echo ""
+echo "=== update details ==="
+call GET "${BASE}/updates/${ID}"
+
+echo ""
 echo "=== trigger prepare ==="
 call PUT "${BASE}/updates/${ID}/prepare"
 

@@ -6,7 +6,7 @@ use std::time::Duration;
 use opensovd_core::{
     FromModel, ToModel, UpdateDescriptor, UpdateError, UpdateFeedback, UpdateProvider,
 };
-use opensovd_models::updates::{UpdateDetail, UpdateStatus};
+use opensovd_models::updates::{UpdateDetail, UpdateOrigins, UpdateStatus};
 use tokio::{sync::watch, time::sleep};
 
 #[derive(Debug)]
@@ -29,6 +29,21 @@ impl UpdateDescriptor for MockUpdate {
 
     fn size(&self) -> u64 {
         self.detail.size
+    }
+
+    fn automated(&self) -> Option<bool> {
+        self.detail.automated
+    }
+
+    fn origin(&self) -> Option<Vec<String>> {
+        self.detail.origin.as_ref().map(|v| {
+            v.iter()
+                .map(|o| match o {
+                    UpdateOrigins::Proximity => "proximity".to_string(),
+                    UpdateOrigins::Remote => "remote".to_string(),
+                })
+                .collect::<Vec<_>>()
+        })
     }
 }
 
@@ -79,7 +94,9 @@ impl ToModel<UpdateStatus> for MockFeedback {
 }
 
 #[derive(Debug)]
-pub struct MockUpdateProvider;
+pub struct MockUpdateProvider {
+    pub failing: bool,
+}
 
 impl UpdateProvider for MockUpdateProvider {
     fn prepare(
@@ -87,20 +104,32 @@ impl UpdateProvider for MockUpdateProvider {
         _update: &dyn UpdateDescriptor,
         feedback: watch::Sender<Option<std::sync::Arc<dyn UpdateFeedback>>>,
     ) -> Result<(), UpdateError> {
+        let failing = self.failing;
         tokio::spawn(async move {
             feedback
                 .send(Some(std::sync::Arc::new(MockFeedback {
                     phase: opensovd_core::Phase::Prepare,
-                    status: opensovd_core::Status::Pending,
+                    status: opensovd_core::Status::InProgress,
                 })))
                 .ok();
             sleep(Duration::from_secs(1)).await;
-            feedback
-                .send(Some(std::sync::Arc::new(MockFeedback {
-                    phase: opensovd_core::Phase::Prepare,
-                    status: opensovd_core::Status::Completed,
-                })))
-                .ok();
+            if failing {
+                feedback
+                    .send(Some(std::sync::Arc::new(MockFeedback {
+                        phase: opensovd_core::Phase::Prepare,
+                        status: opensovd_core::Status::Failed(UpdateError::ProviderError(
+                            "failed".to_string(),
+                        )),
+                    })))
+                    .ok();
+            } else {
+                feedback
+                    .send(Some(std::sync::Arc::new(MockFeedback {
+                        phase: opensovd_core::Phase::Prepare,
+                        status: opensovd_core::Status::Completed,
+                    })))
+                    .ok();
+            }
         });
         Ok(())
     }
@@ -110,20 +139,32 @@ impl UpdateProvider for MockUpdateProvider {
         _update: &dyn UpdateDescriptor,
         feedback: watch::Sender<Option<std::sync::Arc<dyn UpdateFeedback>>>,
     ) -> Result<(), UpdateError> {
+        let failing = self.failing;
         tokio::spawn(async move {
             feedback
                 .send(Some(std::sync::Arc::new(MockFeedback {
                     phase: opensovd_core::Phase::Execute,
-                    status: opensovd_core::Status::Pending,
+                    status: opensovd_core::Status::InProgress,
                 })))
                 .ok();
             sleep(Duration::from_secs(1)).await;
-            feedback
-                .send(Some(std::sync::Arc::new(MockFeedback {
-                    phase: opensovd_core::Phase::Execute,
-                    status: opensovd_core::Status::Completed,
-                })))
-                .ok();
+            if failing {
+                feedback
+                    .send(Some(std::sync::Arc::new(MockFeedback {
+                        phase: opensovd_core::Phase::Execute,
+                        status: opensovd_core::Status::Failed(UpdateError::ProviderError(
+                            "failed".to_string(),
+                        )),
+                    })))
+                    .ok();
+            } else {
+                feedback
+                    .send(Some(std::sync::Arc::new(MockFeedback {
+                        phase: opensovd_core::Phase::Execute,
+                        status: opensovd_core::Status::Completed,
+                    })))
+                    .ok();
+            }
         });
         Ok(())
     }
@@ -133,14 +174,26 @@ impl UpdateProvider for MockUpdateProvider {
         _update: &dyn UpdateDescriptor,
         feedback: watch::Sender<Option<std::sync::Arc<dyn UpdateFeedback>>>,
     ) -> Result<(), UpdateError> {
+        let failing = self.failing;
         tokio::spawn(async move {
             feedback
                 .send(Some(std::sync::Arc::new(MockFeedback {
                     phase: opensovd_core::Phase::Prepare,
-                    status: opensovd_core::Status::Pending,
+                    status: opensovd_core::Status::InProgress,
                 })))
                 .ok();
             sleep(Duration::from_secs(1)).await;
+            if failing {
+                feedback
+                    .send(Some(std::sync::Arc::new(MockFeedback {
+                        phase: opensovd_core::Phase::Prepare,
+                        status: opensovd_core::Status::Failed(UpdateError::ProviderError(
+                            "failed".to_string(),
+                        )),
+                    })))
+                    .ok();
+                return;
+            }
             feedback
                 .send(Some(std::sync::Arc::new(MockFeedback {
                     phase: opensovd_core::Phase::Prepare,
@@ -151,7 +204,7 @@ impl UpdateProvider for MockUpdateProvider {
             feedback
                 .send(Some(std::sync::Arc::new(MockFeedback {
                     phase: opensovd_core::Phase::Execute,
-                    status: opensovd_core::Status::Pending,
+                    status: opensovd_core::Status::InProgress,
                 })))
                 .ok();
             sleep(Duration::from_secs(1)).await;

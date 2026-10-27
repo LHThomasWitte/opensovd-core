@@ -153,3 +153,9 @@ pub struct UpdateStatusResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<serde_json::Value>,
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct UpdatePackagePath {
+    pub update_package_id: String,
+}
