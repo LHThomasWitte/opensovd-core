@@ -13,9 +13,8 @@ use axum::{
 use http::{HeaderValue, request::Parts};
 use opensovd_core::{Topology, UpdateError};
 use opensovd_models::updates::{
-    AvailableUpdates, AvailableUpdatesResponse, Status, UpdateDetail, UpdateDetailQuery,
-    UpdateDetailResponse, UpdateOrigins, UpdatePackagePath, UpdateQuery, UpdateStatus,
-    UpdateStatusResponse,
+    AvailableUpdatesResponse, Status, UpdateDetail, UpdateDetailQuery, UpdateDetailResponse,
+    UpdateOrigins, UpdatePackagePath, UpdateQuery, UpdateStatus, UpdateStatusResponse,
 };
 
 use super::error::Result;
@@ -58,31 +57,29 @@ async fn list_updates(
 ) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
     Ok(Json(AvailableUpdatesResponse {
-        data: AvailableUpdates {
-            items: entity
-                .updates_provider(&topo)?
-                .available()
-                .await
-                .iter()
-                .filter_map(|u| {
-                    if let Some(target_version) = &query.target_version {
-                        // It is unclear how and against what the target_version
-                        // should be compared from the specification. Match it
-                        // against the update_name field which likely contains
-                        // some version information.
-                        if !u.update_name().contains(target_version) {
-                            return None;
-                        }
-                    }
-                    if let Some(origins) = u.origin()
-                        && !origins.contains(&query.origin.to_string())
-                    {
+        items: entity
+            .updates_provider(&topo)?
+            .available()
+            .await
+            .iter()
+            .filter_map(|u| {
+                if let Some(target_version) = &query.target_version {
+                    // It is unclear how and against what the target_version
+                    // should be compared from the specification. Match it
+                    // against the update_name field which likely contains
+                    // some version information.
+                    if !u.update_name().contains(target_version) {
                         return None;
                     }
-                    Some(u.id().clone())
-                })
-                .collect(),
-        },
+                }
+                if let Some(origins) = u.origin()
+                    && !origins.contains(&query.origin.to_string())
+                {
+                    return None;
+                }
+                Some(u.id().clone())
+            })
+            .collect(),
         schema: None,
     }))
 }

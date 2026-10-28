@@ -63,7 +63,7 @@ async fn update_lifecycle(#[case] entity_path: &str) {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(
-        json["data"]["items"].as_array().unwrap().as_slice(),
+        json["items"].as_array().unwrap().as_slice(),
         [] as [&str; 0]
     );
 
@@ -100,8 +100,8 @@ async fn update_lifecycle(#[case] entity_path: &str) {
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["data"]["items"].as_array().unwrap().len(), 1);
-    assert_eq!(json["data"]["items"][0].as_str().unwrap(), "firmware-v1");
+    assert_eq!(json["items"].as_array().unwrap().len(), 1);
+    assert_eq!(json["items"][0].as_str().unwrap(), "firmware-v1");
 
     // Verify that the details of the newly created update can be retrieved.
     let response = request(
@@ -143,7 +143,7 @@ async fn update_lifecycle(#[case] entity_path: &str) {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(
-        json["data"]["items"].as_array().unwrap().as_slice(),
+        json["items"].as_array().unwrap().as_slice(),
         [] as [&str; 0]
     );
 }
@@ -232,10 +232,7 @@ async fn update_query(#[case] query_string: &str, #[case] expected_ids: &[&str])
     assert!(response.status().is_success());
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(
-        json["data"]["items"].as_array().unwrap().as_slice(),
-        expected_ids
-    );
+    assert_eq!(json["items"].as_array().unwrap().as_slice(), expected_ids);
 }
 
 #[rstest::rstest]
