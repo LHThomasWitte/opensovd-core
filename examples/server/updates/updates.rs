@@ -120,15 +120,19 @@ impl UpdateFeedback for Feedback {
     fn step(&self) -> Option<String> {
         self.step.clone()
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl ToModel<UpdateStatus> for Feedback {
-    fn to_model(feedback: &dyn UpdateFeedback) -> UpdateStatus {
-        let phase = match feedback.phase() {
+    fn to_model(&self) -> UpdateStatus {
+        let phase = match self.phase() {
             Phase::Prepare => ModelPhase::Prepare,
             Phase::Execute => ModelPhase::Execute,
         };
-        let status = match &feedback.status() {
+        let status = match &self.status() {
             Status::Pending => ModelStatus::Pending,
             Status::InProgress => ModelStatus::InProgress,
             Status::Failed(_) => ModelStatus::Failed,
@@ -137,8 +141,8 @@ impl ToModel<UpdateStatus> for Feedback {
         UpdateStatus {
             phase,
             status,
-            progress: feedback.progress(),
-            step: feedback.step(),
+            progress: self.progress(),
+            step: self.step(),
             subprogress: None,
             step_translation_id: None,
             error: None,

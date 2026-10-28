@@ -104,7 +104,13 @@ impl Updates {
                         .ok_or(UpdateError::IncompatibleModel)?;
                     Ok(Arc::new(UpdateImpl::from_model(model)))
                 }),
-                feedback2model: Arc::new(|feedback| Ok(Arc::new(FeedbackImpl::to_model(feedback)))),
+                feedback2model: Arc::new(|feedback| {
+                    let feedback = feedback
+                        .as_any()
+                        .downcast_ref::<FeedbackImpl>()
+                        .ok_or(UpdateError::IncompatibleModel)?;
+                    Ok(Arc::new(FeedbackImpl::to_model(feedback)))
+                }),
             })),
         }
     }
@@ -323,8 +329,9 @@ pub trait FromModel<Model> {
 }
 
 pub trait ToModel<Model> {
-    fn to_model(update_feedback: &dyn UpdateFeedback) -> Model;
+    fn to_model(&self) -> Model;
 }
+
 pub trait UpdateDescriptor: std::fmt::Debug + Sync + Send {
     fn as_any(&self) -> &dyn Any;
 
@@ -374,6 +381,8 @@ pub trait UpdateDescriptor: std::fmt::Debug + Sync + Send {
 }
 
 pub trait UpdateFeedback: std::fmt::Debug + Sync + Send {
+    fn as_any(&self) -> &dyn Any;
+
     fn phase(&self) -> Phase;
     fn status(&self) -> Status;
     fn progress(&self) -> Option<u8> {

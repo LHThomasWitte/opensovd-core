@@ -65,25 +65,29 @@ impl UpdateFeedback for MockFeedback {
     fn status(&self) -> opensovd_core::Status {
         self.status.clone()
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl ToModel<UpdateStatus> for MockFeedback {
-    fn to_model(update_feedback: &dyn UpdateFeedback) -> UpdateStatus {
+    fn to_model(&self) -> UpdateStatus {
         UpdateStatus {
-            phase: match update_feedback.phase() {
+            phase: match self.phase() {
                 opensovd_core::Phase::Prepare => opensovd_models::updates::Phase::Prepare,
                 opensovd_core::Phase::Execute => opensovd_models::updates::Phase::Execute,
             },
-            status: match update_feedback.status() {
+            status: match self.status() {
                 opensovd_core::Status::Pending => opensovd_models::updates::Status::Pending,
                 opensovd_core::Status::InProgress => opensovd_models::updates::Status::InProgress,
                 opensovd_core::Status::Completed => opensovd_models::updates::Status::Completed,
                 opensovd_core::Status::Failed(_) => opensovd_models::updates::Status::Failed,
             },
-            progress: update_feedback.progress(),
+            progress: self.progress(),
             subprogress: None,
-            step: update_feedback.step(),
-            step_translation_id: update_feedback.step_translation_id(),
+            step: self.step(),
+            step_translation_id: self.step_translation_id(),
             error: None,
         }
     }
