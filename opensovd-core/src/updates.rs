@@ -12,8 +12,12 @@ pub enum UpdateError {
     ResponseFailed(String),
     #[error("The package cannot be installed automatically")]
     AutomatedUpdateNotSupported,
-    #[error("An update is already being executed")]
+    #[error("An update is already executed")]
     UpdateExecutionInProgress(String),
+    #[error("An update is already in preparation")]
+    UpdateProcessInProgress(String),
+    #[error("An update is already in preparation")]
+    UpdatePreparationInProgress(String),
     #[error("UpdateProvider is not configured")]
     UpdateProviderNotConfigured,
     #[error("Update provider error: {0}")]
@@ -216,7 +220,8 @@ impl Updates {
             .ok_or_else(|| UpdateError::UpdateNotFound(update_package_id.to_string()))?;
 
         let feedback = self.feedback_sender(update_package_id).await;
-        self.check_and_set_active(update_package_id).await?;
+        self.check_and_set_active(update_package_id, UpdateError::UpdateExecutionInProgress)
+            .await?;
 
         self.provider()
             .await
@@ -237,6 +242,8 @@ impl Updates {
             .ok_or_else(|| UpdateError::UpdateNotFound(update_package_id.to_string()))?;
 
         let feedback = self.feedback_sender(update_package_id).await;
+        self.check_and_set_active(update_package_id, UpdateError::UpdatePreparationInProgress)
+            .await?;
 
         self.provider()
             .await
@@ -262,7 +269,8 @@ impl Updates {
         }
 
         let feedback = self.feedback_sender(update_package_id).await;
-        self.check_and_set_active(update_package_id).await?;
+        self.check_and_set_active(update_package_id, UpdateError::UpdateProcessInProgress)
+            .await?;
 
         self.provider()
             .await
@@ -273,12 +281,12 @@ impl Updates {
 
     /// Checks if an update is currently active and sets the given update as active if not.
     /// If another update is currently active, an `UpdateExecutionInProgress` error is returned.
-    async fn check_and_set_active(&self, update_package_id: &str) -> Result<(), UpdateError> {
-        let inner = self.inner.read().await;
-
-        // if an update is marked as active, retrieve its feedback to check if
-        // it is still in progress.
-        // If the feedback does not exist, it means the update is no longer in progress.
+    async fn check_and_set_active(
+        &self,
+        update_package_id: &str,
+        error: impl FnOnce(String) -> UpdateError,
+    ) -> Result<(), UpdateError> {
+        let mut inner = self.inner.write().await;
         if let Some(active) = &inner.active
             && let Some((_, rx)) = inner.feedback.get(active)
         {
@@ -289,18 +297,8 @@ impl Updates {
                 // no longer in progress, so we can continue and set a new
                 // active update.
             } else {
-                return Err(UpdateError::UpdateExecutionInProgress(active.clone()));
+                return Err(error(active.clone()));
             }
-        }
-
-        // no update is active, so we can set the current one as active
-        drop(inner);
-        let mut inner = self.inner.write().await;
-        // check again after aquiring the write lock
-        if let Some(active) = &inner.active
-            && active != update_package_id
-        {
-            return Err(UpdateError::UpdateExecutionInProgress(active.clone()));
         }
         inner.active = Some(update_package_id.to_string());
         Ok(())

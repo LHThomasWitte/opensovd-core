@@ -126,6 +126,7 @@ pub struct UpdateDetail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub struct UpdateDetailResponse {
+    #[serde(flatten)]
     pub data: UpdateDetail,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<serde_json::Value>,
@@ -161,6 +162,7 @@ pub struct UpdateStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub struct UpdateStatusResponse {
+    #[serde(flatten)]
     pub data: UpdateStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<serde_json::Value>,
@@ -170,4 +172,9 @@ pub struct UpdateStatusResponse {
 #[serde(rename_all = "kebab-case")]
 pub struct UpdatePackagePath {
     pub update_package_id: String,
+}
+
+#[derive(Serialize)]
+pub struct UpdatePackageId {
+    pub id: String,
 }

@@ -14,7 +14,8 @@ use http::{HeaderValue, request::Parts};
 use opensovd_core::{Topology, UpdateError};
 use opensovd_models::updates::{
     AvailableUpdatesResponse, Status, UpdateDetail, UpdateDetailQuery, UpdateDetailResponse,
-    UpdateOrigins, UpdatePackagePath, UpdateQuery, UpdateStatus, UpdateStatusResponse,
+    UpdateOrigins, UpdatePackageId, UpdatePackagePath, UpdateQuery, UpdateStatus,
+    UpdateStatusResponse,
 };
 
 use super::error::Result;
@@ -89,7 +90,7 @@ async fn create_updates(
     entity: Entity,
     parts: Parts,
     Json(body): Json<UpdateDetail>,
-) -> Result<(StatusCode, HeaderMap)> {
+) -> Result<impl IntoResponse> {
     let topo = topology.read().await;
     let id = entity.updates_provider(&topo)?.push(&body).await?;
     let versioned_uri = super::versioned_uri(&parts);
@@ -106,7 +107,7 @@ async fn create_updates(
     .map_err(|e| UpdateError::ResponseFailed(e.to_string()))?;
     headers.insert("Location", location);
 
-    Ok((StatusCode::CREATED, headers))
+    Ok((StatusCode::CREATED, headers, Json(UpdatePackageId { id })))
 }
 
 async fn get_update_package(

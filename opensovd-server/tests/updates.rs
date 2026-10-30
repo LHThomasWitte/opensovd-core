@@ -87,6 +87,9 @@ async fn update_lifecycle(#[case] entity_path: &str) {
         response.headers().get("location").unwrap(),
         &server.url(&format!("/sovd/v1/{entity_path}updates/firmware-v1"))
     );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["id"].as_str().unwrap(), "firmware-v1");
 
     // Verify that the newly created update appears in the list.
     let response = request(
@@ -115,9 +118,9 @@ async fn update_lifecycle(#[case] entity_path: &str) {
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["data"]["id"].as_str().unwrap(), "firmware-v1");
-    assert_eq!(json["data"]["update_name"].as_str().unwrap(), "Firmware v1");
-    assert_eq!(json["data"]["size"].as_u64().unwrap(), 0);
+    assert_eq!(json["id"].as_str().unwrap(), "firmware-v1");
+    assert_eq!(json["update_name"].as_str().unwrap(), "Firmware v1");
+    assert_eq!(json["size"].as_u64().unwrap(), 0);
 
     // Verify that the new update can be deleted.
     let response = request(
@@ -287,8 +290,8 @@ async fn update_installation(#[case] phase: &str) {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(json["data"]["phase"].as_str().unwrap(), phase);
-    assert_eq!(json["data"]["status"].as_str().unwrap(), "inProgress");
+    assert_eq!(json["phase"].as_str().unwrap(), phase);
+    assert_eq!(json["status"].as_str().unwrap(), "inProgress");
 
     // wait for the mock update to finish
     sleep(Duration::from_millis(1200)).await;
@@ -305,8 +308,8 @@ async fn update_installation(#[case] phase: &str) {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(json["data"]["phase"].as_str().unwrap(), phase);
-    assert_eq!(json["data"]["status"].as_str().unwrap(), "completed");
+    assert_eq!(json["phase"].as_str().unwrap(), phase);
+    assert_eq!(json["status"].as_str().unwrap(), "completed");
 }
 
 #[rstest::rstest]
@@ -358,8 +361,8 @@ async fn update_installation_failing(#[case] phase: &str) {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(json["data"]["phase"].as_str().unwrap(), phase);
-    assert_eq!(json["data"]["status"].as_str().unwrap(), "inProgress");
+    assert_eq!(json["phase"].as_str().unwrap(), phase);
+    assert_eq!(json["status"].as_str().unwrap(), "inProgress");
 
     // wait for the mock update to finish
     sleep(Duration::from_millis(1200)).await;
@@ -376,8 +379,8 @@ async fn update_installation_failing(#[case] phase: &str) {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(json["data"]["phase"].as_str().unwrap(), phase);
-    assert_eq!(json["data"]["status"].as_str().unwrap(), "failed");
+    assert_eq!(json["phase"].as_str().unwrap(), phase);
+    assert_eq!(json["status"].as_str().unwrap(), "failed");
 }
 
 #[tokio::test]
@@ -434,8 +437,8 @@ async fn update_automated() {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["data"]["phase"].as_str().unwrap(), phase);
-        assert_eq!(json["data"]["status"].as_str().unwrap(), status);
+        assert_eq!(json["phase"].as_str().unwrap(), phase);
+        assert_eq!(json["status"].as_str().unwrap(), status);
 
         // wait for the mock update to finish
         sleep(Duration::from_millis(1200)).await;
@@ -590,6 +593,16 @@ async fn parallel_update_execution_is_conflict() {
     // attempt to install the second update while the first is in progress
     let response = request(
         &server.url("/sovd/v1/apps/ota_manager/updates/firmware-v2/automated"),
+        http::Method::PUT,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    // attempt to prepare the second update while the first is in progress
+    let response = request(
+        &server.url("/sovd/v1/apps/ota_manager/updates/firmware-v2/prepare"),
         http::Method::PUT,
         None,
     )

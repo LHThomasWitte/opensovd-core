@@ -161,6 +161,28 @@ fn update_error(e: &UpdateError) -> (StatusCode, ErrorDetails) {
             }
             .into(),
         ),
+        UpdateError::UpdateProcessInProgress(id) => (
+            StatusCode::CONFLICT,
+            GenericError {
+                error_code: ErrorCode::UpdateProcessInProgress,
+                message: e.to_string(),
+                parameters: Some(HashMap::from([("id".to_string(), json!(id))])),
+                vendor_code: None,
+                translation_id: None,
+            }
+            .into(),
+        ),
+        UpdateError::UpdatePreparationInProgress(id) => (
+            StatusCode::CONFLICT,
+            GenericError {
+                error_code: ErrorCode::UpdatePreparationInProgress,
+                message: e.to_string(),
+                parameters: Some(HashMap::from([("id".to_string(), json!(id))])),
+                vendor_code: None,
+                translation_id: None,
+            }
+            .into(),
+        ),
         UpdateError::UpdateProviderNotConfigured | UpdateError::IncompatibleModel => (
             StatusCode::INTERNAL_SERVER_ERROR,
             GenericError::new(ErrorCode::SovdServerMisconfigured, e.to_string()).into(),
